@@ -32,7 +32,7 @@
 *  POSSIBILITY OF SUCH DAMAGE.
 ********************************************************************/
 
-#include <rosbag_snapshot/snapshotter.h>
+#include <rosbag2_snapshot/snapshotter.hpp>
 #include <rosbag/exceptions.h>
 
 #include <boost/program_options.hpp>
@@ -42,11 +42,11 @@
 
 namespace po = boost::program_options;
 
-using rosbag_snapshot::Snapshotter;
-using rosbag_snapshot::SnapshotterClient;
-using rosbag_snapshot::SnapshotterOptions;
-using rosbag_snapshot::SnapshotterTopicOptions;
-using rosbag_snapshot::SnapshotterClientOptions;
+using rosbag2_snapshot::Snapshotter;
+using rosbag2_snapshot::SnapshotterClient;
+using rosbag2_snapshot::SnapshotterOptions;
+using rosbag2_snapshot::SnapshotterTopicOptions;
+using rosbag2_snapshot::SnapshotterClientOptions;
 
 const int MB_TO_BYTES = 1E6;
 
@@ -88,13 +88,13 @@ bool parseOptions(po::variables_map& vm, int argc, char** argv)
   }
   catch (boost::program_options::error const& e)
   {
-    std::cout << "rosbag_snapshot: " << e.what() << std::endl;
+    std::cout << "rosbag2_snapshot: " << e.what() << std::endl;
     return false;
   }
 
   if (vm.count("help"))
   {
-    std::cout << "Usage: rosrun rosbag_snapshot snapshot [options] [topic1 topic2 ...]" << std::endl
+    std::cout << "Usage: rosrun rosbag2_snapshot snapshot [options] [topic1 topic2 ...]" << std::endl
               << std::endl
               << "Buffer recent messages until triggered to write or trigger an already running instance." << std::endl
               << std::endl;
@@ -257,6 +257,6 @@ int main(int argc, char** argv)
   }
 
   // Run the snapshotter
-  rosbag_snapshot::Snapshotter snapshotter(opts);
+  rosbag2_snapshot::Snapshotter snapshotter(opts);
   return snapshotter.run();
 }

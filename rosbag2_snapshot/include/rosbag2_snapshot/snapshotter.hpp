@@ -31,8 +31,8 @@
 *  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 *  POSSIBILITY OF SUCH DAMAGE.
 ********************************************************************/
-#ifndef ROSBAG_SNAPSHOT_SNAPSHOTTER_H
-#define ROSBAG_SNAPSHOT_SNAPSHOTTER_H
+#ifndef ROSBAG2_SNAPSHOT__SNAPSHOTTER_HPP_
+#define ROSBAG2_SNAPSHOT__SNAPSHOTTER_HPP_
 
 #include <boost/atomic.hpp>
 #include <boost/thread/mutex.hpp>
@@ -272,4 +272,4 @@ private:
 
 }  // namespace rosbag_snapshot
 
-#endif  // ROSBAG_SNAPSHOT_SNAPSHOTTER_H
+#endif  // ROSBAG2_SNAPSHOT__SNAPSHOTTER_HPP_

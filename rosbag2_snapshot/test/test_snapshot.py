@@ -38,13 +38,13 @@ import unittest
 import rospy
 from rosbag import Bag
 from std_srvs.srv import SetBool
-from rosbag_snapshot_msgs.msg import SnapshotStatus
-from rosbag_snapshot_msgs.srv import TriggerSnapshot, TriggerSnapshotRequest, TriggerSnapshotResponse
+from rosbag2_snapshot_msgs.msg import SnapshotStatus
+from rosbag2_snapshot_msgs.srv import TriggerSnapshot, TriggerSnapshotRequest, TriggerSnapshotResponse
 
 
 class TestRosbagSnapshot(unittest.TestCase):
     '''
-    Tests the "rosbag_snapshot" command.
+    Tests the "rosbag2_snapshot" command.
     Relies on the nodes launched in snapshot.test
     '''
     def __init__(self, *args):
@@ -246,5 +246,5 @@ class TestRosbagSnapshot(unittest.TestCase):
 if __name__ == '__main__':
     import rostest
     PKG = 'rosbag'
-    rospy.init_node('test_rosbag_snapshot', anonymous=True)
+    rospy.init_node('test_rosbag2_snapshot', anonymous=True)
     rostest.run(PKG, 'TestRosbagSnapshot', TestRosbagSnapshot, sys.argv)

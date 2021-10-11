@@ -43,8 +43,8 @@
 #include <ros/ros.h>
 #include <ros/assert.h>
 #include <topic_tools/shape_shifter.h>
-#include <rosbag_snapshot_msgs/SnapshotStatus.h>
-#include <rosbag_snapshot/snapshotter.h>
+#include <rosbag2_snapshot_msgs/SnapshotStatus.h>
+#include <rosbag2_snapshot/snapshotter.h>
 #include <memory>
 #include <utility>
 
@@ -52,7 +52,7 @@ using std::string;
 using boost::shared_ptr;
 using ros::Time;
 
-namespace rosbag_snapshot
+namespace rosbag2_snapshot
 {
 const ros::Duration SnapshotterTopicOptions::NO_DURATION_LIMIT = ros::Duration(-1);
 const int32_t SnapshotterTopicOptions::NO_MEMORY_LIMIT = -1;
@@ -234,7 +234,7 @@ const int Snapshotter::QUEUE_SIZE = 10;
 
 Snapshotter::Snapshotter(SnapshotterOptions const& options) : options_(options), recording_(true), writing_(false)
 {
-  status_pub_ = nh_.advertise<rosbag_snapshot_msgs::SnapshotStatus>("snapshot_status", 10);
+  status_pub_ = nh_.advertise<rosbag2_snapshot_msgs::SnapshotStatus>("snapshot_status", 10);
 }
 
 Snapshotter::~Snapshotter()
@@ -313,8 +313,8 @@ void Snapshotter::subscribe(string const& topic, boost::shared_ptr<MessageQueue>
 }
 
 bool Snapshotter::writeTopic(rosbag::Bag& bag, MessageQueue& message_queue, string const& topic,
-                             rosbag_snapshot_msgs::TriggerSnapshot::Request& req,
-                             rosbag_snapshot_msgs::TriggerSnapshot::Response& res)
+                             rosbag2_snapshot_msgs::TriggerSnapshot::Request& req,
+                             rosbag2_snapshot_msgs::TriggerSnapshot::Response& res)
 {
   // acquire lock for this queue
   boost::mutex::scoped_lock l(message_queue.lock);
@@ -354,8 +354,8 @@ bool Snapshotter::writeTopic(rosbag::Bag& bag, MessageQueue& message_queue, stri
   return true;
 }
 
-bool Snapshotter::triggerSnapshotCb(rosbag_snapshot_msgs::TriggerSnapshot::Request& req,
-                                   rosbag_snapshot_msgs::TriggerSnapshot::Response& res)
+bool Snapshotter::triggerSnapshotCb(rosbag2_snapshot_msgs::TriggerSnapshot::Request& req,
+                                   rosbag2_snapshot_msgs::TriggerSnapshot::Response& res)
 {
   if (!postfixFilename(req.filename))
   {
@@ -501,7 +501,7 @@ void Snapshotter::publishStatus(ros::TimerEvent const& e)
 
   // TODO(any): consider options to make this faster
   // (caching and updating last status, having queues track their own status)
-  rosbag_snapshot_msgs::SnapshotStatus msg;
+  rosbag2_snapshot_msgs::SnapshotStatus msg;
   {
     boost::shared_lock<boost::upgrade_mutex> lock(state_lock_);
     msg.enabled = recording_;
@@ -519,7 +519,7 @@ void Snapshotter::publishStatus(ros::TimerEvent const& e)
   status_pub_.publish(msg);
 }
 
-void Snapshotter::pollTopics(ros::TimerEvent const& e, rosbag_snapshot::SnapshotterOptions *options)
+void Snapshotter::pollTopics(ros::TimerEvent const& e, rosbag2_snapshot::SnapshotterOptions *options)
 {
   (void)e;
   ros::master::V_TopicInfo topics;
@@ -589,13 +589,13 @@ int SnapshotterClient::run(SnapshotterClientOptions const& opts)
 {
   if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE)
   {
-    ros::ServiceClient client = nh_.serviceClient<rosbag_snapshot_msgs::TriggerSnapshot>("trigger_snapshot");
+    ros::ServiceClient client = nh_.serviceClient<rosbag2_snapshot_msgs::TriggerSnapshot>("trigger_snapshot");
     if (!client.exists())
     {
       ROS_ERROR("Service %s does not exist. Is snapshot running in this namespace?", "trigger_snapshot");
       return 1;
     }
-    rosbag_snapshot_msgs::TriggerSnapshotRequest req;
+    rosbag2_snapshot_msgs::TriggerSnapshotRequest req;
     req.topics = opts.topics_;
     // Prefix mode
     if (opts.filename_.empty())
@@ -619,7 +619,7 @@ int SnapshotterClient::run(SnapshotterClientOptions const& opts)
     boost::filesystem::path p(boost::filesystem::system_complete(req.filename));
     req.filename = p.string();
 
-    rosbag_snapshot_msgs::TriggerSnapshotResponse res;
+    rosbag2_snapshot_msgs::TriggerSnapshotResponse res;
     if (!client.call(req, res))
     {
       ROS_ERROR("Failed to call service");
@@ -662,4 +662,4 @@ int SnapshotterClient::run(SnapshotterClientOptions const& opts)
   }
 }
 
-}  // namespace rosbag_snapshot
+}  // namespace rosbag2_snapshot
