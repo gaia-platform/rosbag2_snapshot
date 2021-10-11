@@ -185,7 +185,6 @@ class Snapshotter : public rclcpp::Node
 {
 public:
   explicit Snapshotter(const rclcpp::NodeOptions & options);
-  ~Snapshotter();
 
 private:
   // Subscribe queue size for each topic
@@ -199,8 +198,8 @@ private:
   bool recording_;
   // True if currently writing buffers to a bag file
   bool writing_;
-  rclcpp::Service<rosbag2_snapshot_msgs::srv::TriggerSnapshot> trigger_snapshot_server_;
-  rclcpp::Service<std_srvs::srv::SetBool> enable_server_;
+  rclcpp::Service<rosbag2_snapshot_msgs::srv::TriggerSnapshot>::SharedPtr trigger_snapshot_server_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enable_server_;
   rclcpp::TimerBase::SharedPtr poll_topic_timer_;
 
   // Convert parameter values into a SnapshotterOptions object
@@ -214,10 +213,10 @@ private:
   // Clear the internal buffers of all topics. Used when resuming after a pause to avoid time gaps
   void clear();
   // Subscribe to one of the topics, setting up the callback to add to the respective queue
-  void subscribe(std::string const & topic, std::shared_ptr<MessageQueue> queue);
+  void subscribe(const std::string & topic, const std::string & type, std::shared_ptr<MessageQueue> queue);
   // Called on new message from any configured topic. Adds to queue for that topic
   void topicCB(
-    std::shared_ptr<rclcpp::SerializedMessage> & msg,
+    std::shared_ptr<const rclcpp::SerializedMessage> msg,
     std::shared_ptr<MessageQueue> queue);
   // Service callback, write all of part of the internal buffers to a bag file according to request parameters
   bool triggerSnapshotCb(

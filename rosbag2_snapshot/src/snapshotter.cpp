@@ -54,6 +54,8 @@ using namespace std::chrono_literals;
 using rclcpp::Time;
 using std::shared_ptr;
 using std::string;
+using std::placeholders::_1;
+using std::placeholders::_2;
 
 const rclcpp::Duration NO_DURATION_LIMIT = rclcpp::Duration(-1s);
 const rclcpp::Duration INHERIT_DURATION_LIMIT = rclcpp::Duration(0s);
@@ -168,8 +170,8 @@ bool MessageQueue::preparePush(int32_t size, rclcpp::Time const & time)
 }
 void MessageQueue::push(SnapshotMessage const & _out)
 {
-  auto ret = std::try_lock(lock);
-  if (ret != -1) {
+  auto ret = lock.try_lock();
+  if (!ret) {
     RCLCPP_ERROR(logger_, "Failed to lock. Time %f", _out.time.seconds());
     return;
   }
@@ -245,37 +247,36 @@ Snapshotter::Snapshotter(const rclcpp::NodeOptions & options)
     shared_ptr<MessageQueue> queue;
     queue.reset(new MessageQueue(pair.second, get_logger()));
     std::pair<buffers_t::iterator, bool> res =
-      buffers_.insert(buffers_t::value_type(std::make_pair(topic, type), queue));
+      buffers_.insert(buffers_t::value_type(
+        std::make_pair<std::string, std::string>(topic, type), queue));
     assert(res.second);
     subscribe(topic, type, queue);
   }
 
   // Now that subscriptions are setup, setup service servers for writing and pausing
-  trigger_snapshot_server_ = nh_.advertiseService(
-    "trigger_snapshot",
-    &Snapshotter::triggerSnapshotCb, this);
-  enable_server_ = nh_.advertiseService("enable_snapshot", &Snapshotter::enableCB, this);
+  trigger_snapshot_server_ = create_service<rosbag2_snapshot_msgs::srv::TriggerSnapshot>(
+    "trigger_snapshot", std::bind(&Snapshotter::triggerSnapshotCb, this, _1, _2));
+  enable_server_ = create_service<std_srvs::srv::SetBool>(
+    "enable_snapshot", std::bind(&Snapshotter::enableCB, this, _1, _2));
 
   // Start timer to poll for topics
   if (options_.all_topics_) {
     poll_topic_timer_ =
       create_wall_timer(
-      rclcpp::Duration(1s),
+      std::chrono::duration(1s),
       std::bind(&Snapshotter::pollTopics, this));
   }
 }
 
-Snapshotter::~Snapshotter()
+void Snapshotter::parseOptionsFromParams()
 {
-  // Each buffer contains a pointer to the subscriber and vice versa, so we need to
-  // shutdown the subscriber to allow garbage collection to happen
-  for (std::pair<const std::string, std::shared_ptr<MessageQueue>> & buffer : buffers_) {
-    buffer.second->sub_->shutdown();
+  try {
+    options_.default_duration_limit_ = rclcpp::Duration::from_seconds(
+      declare_parameter<double>("default_duration_limit"));
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    RCLCPP_ERROR(get_logger(), "default_duration_limit not specified or of incorrect type.");
+    throw ex;
   }
-}
-
-Snapshotter::parseOptionsFromParams()
-{
 }
 
 void Snapshotter::fixTopicOptions(SnapshotterTopicOptions & options)
@@ -310,7 +311,7 @@ string Snapshotter::timeAsStr()
 }
 
 void Snapshotter::topicCB(
-  const ros::MessageEvent<topic_tools::ShapeShifter const> & msg_event,
+  std::shared_ptr<const rclcpp::SerializedMessage> msg,
   std::shared_ptr<MessageQueue> queue)
 {
   // If recording is paused (or writing), exit
@@ -322,31 +323,22 @@ void Snapshotter::topicCB(
   }
 
   // Pack message and metadata into SnapshotMessage holder
-  SnapshotMessage out(msg_event.getMessage(),
-    msg_event.getConnectionHeaderPtr(), msg_event.getReceiptTime());
+  SnapshotMessage out(msg, now());
   queue->push(out);
 }
 
-void Snapshotter::subscribe(string const & topic, std::shared_ptr<MessageQueue> queue)
+void Snapshotter::subscribe(const string & topic, const string & type, std::shared_ptr<MessageQueue> queue)
 {
   RCLCPP_INFO(get_logger(), "Subscribing to %s", topic.c_str());
 
-  auto ops = rclcpp::SubscriptionOptions;
+  auto opts = rclcpp::SubscriptionOptions{};
   opts.topic_stats_options.state = rclcpp::TopicStatisticsState::Enable;
   opts.topic_stats_options.publish_topic = topic + "/statistics";
 
   auto sub = create_generic_subscription(
-    topic,
+    topic, type, rclcpp::QoS{10}, std::bind(&Snapshotter::topicCB, this, _1, queue), opts
   );
 
-  ops.publish_topic = topic;
-  ops.queue_size = QUEUE_SIZE;
-  ops.md5sum = ros::message_traits::md5sum<topic_tools::ShapeShifter>();
-  ops.datatype = ros::message_traits::datatype<topic_tools::ShapeShifter>();
-  ops.helper =
-    std::make_shared<ros::SubscriptionCallbackHelperT<const ros::MessageEvent<topic_tools::ShapeShifter const> &>>(
-    std::bind(&Snapshotter::topicCB, this, _1, queue));
-  *sub = nh_.subscribe(ops);
   queue->setSubscriber(sub);
 }
 
