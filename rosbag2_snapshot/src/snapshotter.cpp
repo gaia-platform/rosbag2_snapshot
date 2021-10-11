@@ -1,36 +1,31 @@
-/*********************************************************************
-* Software License Agreement (BSD License)
-*
-*  Copyright (c) 2018, Open Source Robotics Foundation, Inc.
-*  All rights reserved.
-*
-*  Redistribution and use in source and binary forms, with or without
-*  modification, are permitted provided that the following conditions
-*  are met:
-*
-*   * Redistributions of source code must retain the above copyright
-*     notice, this list of conditions and the following disclaimer.
-*   * Redistributions in binary form must reproduce the above
-*     copyright notice, this list of conditions and the following
-*     disclaimer in the documentation and/or other materials provided
-*     with the distribution.
-*   * Neither the name of Open Source Robotics Foundation, Inc. nor the
-*     names of its contributors may be used to endorse or promote products
-*     derived from this software without specific prior written permission.
-*
-*  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-*  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-*  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-*  FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-*  COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-*  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-*  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-*  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-*  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-*  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-*  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-*  POSSIBILITY OF SUCH DAMAGE.
-********************************************************************/
+// Copyright (c) 2018-2021, Open Source Robotics Foundation, Inc., GAIA Platform, Inc., All rights reserved.  // NOLINT
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+//    * Redistributions of source code must retain the above copyright
+//      notice, this list of conditions and the following disclaimer.
+//
+//    * Redistributions in binary form must reproduce the above copyright
+//      notice, this list of conditions and the following disclaimer in the
+//      documentation and/or other materials provided with the distribution.
+//
+//    * Neither the name of the {copyright_holder} nor the names of its
+//      contributors may be used to endorse or promote products derived from
+//      this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #include <rclcpp/scope_exit.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rosbag2_snapshot/snapshotter.hpp>
@@ -56,6 +51,9 @@ using std::shared_ptr;
 using std::string;
 using std::placeholders::_1;
 using std::placeholders::_2;
+using std::placeholders::_3;
+using std_srvs::srv::SetBool;
+using rosbag2_snapshot_msgs::srv::TriggerSnapshot;
 
 const rclcpp::Duration NO_DURATION_LIMIT = rclcpp::Duration(-1s);
 const rclcpp::Duration INHERIT_DURATION_LIMIT = rclcpp::Duration(0s);
@@ -247,17 +245,16 @@ Snapshotter::Snapshotter(const rclcpp::NodeOptions & options)
     shared_ptr<MessageQueue> queue;
     queue.reset(new MessageQueue(pair.second, get_logger()));
     std::pair<buffers_t::iterator, bool> res =
-      buffers_.insert(buffers_t::value_type(
-        std::make_pair<std::string, std::string>(topic, type), queue));
+      buffers_.insert(buffers_t::value_type(topic, queue));
     assert(res.second);
     subscribe(topic, type, queue);
   }
 
   // Now that subscriptions are setup, setup service servers for writing and pausing
-  trigger_snapshot_server_ = create_service<rosbag2_snapshot_msgs::srv::TriggerSnapshot>(
-    "trigger_snapshot", std::bind(&Snapshotter::triggerSnapshotCb, this, _1, _2));
-  enable_server_ = create_service<std_srvs::srv::SetBool>(
-    "enable_snapshot", std::bind(&Snapshotter::enableCB, this, _1, _2));
+  trigger_snapshot_server_ = create_service<TriggerSnapshot>(
+    "trigger_snapshot", std::bind(&Snapshotter::triggerSnapshotCb, this, _1, _2, _3));
+  enable_server_ = create_service<SetBool>(
+    "enable_snapshot", std::bind(&Snapshotter::enableCb, this, _1, _2, _3));
 
   // Start timer to poll for topics
   if (options_.all_topics_) {
@@ -310,7 +307,7 @@ string Snapshotter::timeAsStr()
   return msg.str();
 }
 
-void Snapshotter::topicCB(
+void Snapshotter::topicCb(
   std::shared_ptr<const rclcpp::SerializedMessage> msg,
   std::shared_ptr<MessageQueue> queue)
 {
@@ -327,7 +324,9 @@ void Snapshotter::topicCB(
   queue->push(out);
 }
 
-void Snapshotter::subscribe(const string & topic, const string & type, std::shared_ptr<MessageQueue> queue)
+void Snapshotter::subscribe(
+  const string & topic, const string & type,
+  std::shared_ptr<MessageQueue> queue)
 {
   RCLCPP_INFO(get_logger(), "Subscribing to %s", topic.c_str());
 
@@ -336,32 +335,35 @@ void Snapshotter::subscribe(const string & topic, const string & type, std::shar
   opts.topic_stats_options.publish_topic = topic + "/statistics";
 
   auto sub = create_generic_subscription(
-    topic, type, rclcpp::QoS{10}, std::bind(&Snapshotter::topicCB, this, _1, queue), opts
+    topic, type, rclcpp::QoS{10}, std::bind(&Snapshotter::topicCb, this, _1, queue), opts
   );
 
   queue->setSubscriber(sub);
 }
 
 bool Snapshotter::writeTopic(
-  rosbag::Bag & bag, MessageQueue & message_queue, string const & topic,
-  rosbag2_snapshot_msgs::TriggerSnapshot::Request & req,
-  rosbag2_snapshot_msgs::TriggerSnapshot::Response & res)
+  rosbag2_cpp::Writer & bag_writer,
+  MessageQueue & message_queue,
+  string const & topic,
+  TriggerSnapshot::Request::SharedPtr & req,
+  TriggerSnapshot::Response::SharedPtr & res)
 {
   // acquire lock for this queue
   std::lock_guard l(message_queue.lock);
 
-  MessageQueue::range_t range = message_queue.rangeFromTimes(req.start_time, req.stop_time);
+  MessageQueue::range_t range = message_queue.rangeFromTimes(req->start_time, req->stop_time);
 
+  /* TODO(jwhitleywork): FIX
   // open bag if this the first valid topic and there is data
   if (!bag.isOpen() && range.second > range.first) {
     try {
-      bag.open(req.filename, rosbag::bagmode::Write);
+      bag.open(req->filename, rosbag::bagmode::Write);
     } catch (rosbag::BagException const & err) {
-      res.success = false;
-      res.message = string("failed to open bag: ") + err.what();
+      res->success = false;
+      res->message = string("failed to open bag: ") + err.what();
       return false;
     }
-    RCLCPP_INFO(get_logger(), "Writing snapshot to %s", req.filename.c_str());
+    RCLCPP_INFO(get_logger(), "Writing snapshot to %s", req->filename.c_str());
   }
 
   // write queue
@@ -371,19 +373,23 @@ bool Snapshotter::writeTopic(
       bag.write(topic, msg.time, msg.msg);
     }
   } catch (rosbag::BagException const & err) {
-    res.success = false;
-    res.message = string("failed to write bag: ") + err.what();
+    res->success = false;
+    res->message = string("failed to write bag: ") + err.what();
   }
+  */
   return true;
 }
 
 bool Snapshotter::triggerSnapshotCb(
-  rosbag2_snapshot_msgs::TriggerSnapshot::Request & req,
-  rosbag2_snapshot_msgs::TriggerSnapshot::Response & res)
+  const std::shared_ptr<rmw_request_id_t> request_header,
+  const TriggerSnapshot::Request::SharedPtr req,
+  TriggerSnapshot::Response::SharedPtr res)
 {
-  if (!postfixFilename(req.filename)) {
-    res.success = false;
-    res.message = "invalid";
+  (void)request_header;
+
+  if (!postfixFilename(req->filename)) {
+    res->success = false;
+    res->message = "invalid";
     return true;
   }
   bool recording_prior;  // Store if we were recording prior to write to restore this state after write
@@ -391,8 +397,8 @@ bool Snapshotter::triggerSnapshotCb(
     std::shared_lock<std::shared_mutex> read_lock(state_lock_);
     recording_prior = recording_;
     if (writing_) {
-      res.success = false;
-      res.message = "Already writing";
+      res->success = false;
+      res->message = "Already writing";
       return true;
     }
     std::unique_lock<std::shared_mutex> write_lock(state_lock_);
@@ -404,24 +410,25 @@ bool Snapshotter::triggerSnapshotCb(
 
   // Ensure that state is updated when function exits, regardlesss of branch path / exception events
   rclcpp::make_scope_exit(
-    [&state_lock_, &writing_, recording_prior, this_]()
+    [recording_prior, this]()
     {
       // Clear buffers beacuase time gaps (skipped messages) may have occured while paused
       std::unique_lock<std::shared_mutex> write_lock(state_lock_);
       // Turn off writing flag and return recording to its state before writing
       writing_ = false;
       if (recording_prior) {
-        this_->resume();
+        this->resume();
       }
     }
   );
 
+  /* TODO(jwhitleywork): FIX
   // Create bag
   rosbag::Bag bag;
 
   // Write each selected topic's queue to bag file
-  if (req.topics.size() && req.topics.at(0).size()) {
-    for (std::string & topic : req.topics) {
+  if (req->topics.size() && req->topics.at(0).size()) {
+    for (std::string & topic : req->topics) {
       // Resolve and clean topic
       try {
         topic = ros::names::resolve(nh_.getNamespace(), topic);
@@ -456,12 +463,13 @@ bool Snapshotter::triggerSnapshotCb(
 
   // If no topics were subscribed/valid/contained data, this is considered a non-success
   if (!bag.isOpen()) {
-    res.success = false;
-    res.message = res.NO_DATA_MESSAGE;
+    res->success = false;
+    res->message = res->NO_DATA_MESSAGE;
     return true;
   }
+  */
 
-  res.success = true;
+  res->success = true;
   return true;
 }
 
@@ -485,40 +493,55 @@ void Snapshotter::resume()
   RCLCPP_INFO(get_logger(), "Buffering resumed and old data cleared.");
 }
 
-bool Snapshotter::enableCB(std_srvs::SetBool::Request & req, std_srvs::SetBool::Response & res)
+bool Snapshotter::enableCb(
+  const std::shared_ptr<rmw_request_id_t> request_header,
+  const SetBool::Request::SharedPtr req,
+  SetBool::Response::SharedPtr res)
 {
+  (void)request_header;
+
   std::shared_lock<std::shared_mutex> read_lock(state_lock_);
-  if (req.data && writing_) { // Cannot enable while writing
-    res.success = false;
-    res.message = "cannot enable recording while writing.";
+  if (req->data && writing_) { // Cannot enable while writing
+    res->success = false;
+    res->message = "cannot enable recording while writing.";
     return true;
   }
   // Obtain write lock and update state if requested state is different from current
-  if (req.data && !recording_) {
+  if (req->data && !recording_) {
     std::unique_lock<std::shared_mutex> write_lock(state_lock_);
     resume();
-  } else if (!req.data && recording_) {
+  } else if (!req->data && recording_) {
     std::unique_lock<std::shared_mutex> write_lock(state_lock_);
     pause();
   }
-  res.success = true;
+  res->success = true;
   return true;
 }
 
 void Snapshotter::pollTopics()
 {
-  const auto topic_names_types = get_topic_names_and_types();
-  
+  const auto topic_names_and_types = get_topic_names_and_types();
+
   for (const auto & name_type : topic_names_and_types) {
-    if (options_->addTopic(name_type.first)) {
+    if (name_type.second.size() < 1) {
+      RCLCPP_ERROR(get_logger(), "Subscribed topic has no associated type.");
+      return;
+    }
+
+    if (name_type.second.size() > 1) {
+      RCLCPP_ERROR(get_logger(), "Subscribed topic has more than one associated type.");
+      return;
+    }
+
+    if (options_.addTopic(name_type.first, name_type.second[0])) {
       SnapshotterTopicOptions topic_options;
       fixTopicOptions(topic_options);
       std::shared_ptr<MessageQueue> queue;
       queue.reset(new MessageQueue(topic_options, get_logger()));
       std::pair<buffers_t::iterator,
-        bool> res = buffers_.insert(buffers_t::value_type(topic, queue));
+        bool> res = buffers_.insert(buffers_t::value_type(name_type.first, queue));
       assert(res.second);
-      subscribe(name_type.first, name_type.second, queue);
+      subscribe(name_type.first, name_type.second[0], queue);
     }
   }
 }
@@ -531,75 +554,79 @@ SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
 void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptions & opts)
 {
   if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE) {
-    ros::ServiceClient client = nh_.serviceClient<rosbag2_snapshot_msgs::TriggerSnapshot>(
+    auto client = create_client<TriggerSnapshot>(
       "trigger_snapshot");
-    if (!client.exists()) {
+    if (!client->service_is_ready()) {
       RCLCPP_ERROR(
-        get_logger(), 
-        "Service %s does not exist. Is snapshot running in this namespace?",
-        "trigger_snapshot");
-      return 1;
+        get_logger(),
+        "Service trigger_snapshot is not ready. Is snapshot running in this namespace?");
+      return;
     }
-    rosbag2_snapshot_msgs::TriggerSnapshotRequest req;
-    req.topics = opts.topics_;
+
+    TriggerSnapshot::Request::SharedPtr req;
+    req->topics = opts.topics_;
+
     // Prefix mode
     if (opts.filename_.empty()) {
-      req.filename = opts.prefix_;
-      size_t ind = req.filename.rfind(".bag");
-      if (ind != string::npos && ind == req.filename.size() - 4) {
-        req.filename.erase(ind);
+      req->filename = opts.prefix_;
+      size_t ind = req->filename.rfind(".bag");
+      if (ind != string::npos && ind == req->filename.size() - 4) {
+        req->filename.erase(ind);
       }
     } else {
-      req.filename = opts.filename_;
-      size_t ind = req.filename.rfind(".bag");
-      if (ind == string::npos || ind != req.filename.size() - 4) {
-        req.filename += ".bag";
+      req->filename = opts.filename_;
+      size_t ind = req->filename.rfind(".bag");
+      if (ind == string::npos || ind != req->filename.size() - 4) {
+        req->filename += ".bag";
       }
     }
 
     // Resolve filename relative to clients working directory to avoid confusion
-    if (req.filename.empty()) { // Special case of no specified file, ensure still in working directory of client
-      req.filename = "./";
+    if (req->filename.empty()) { // Special case of no specified file, ensure still in working directory of client
+      req->filename = "./";
     }
-    std::filesystem::path p(std::filesystem::absolute(req.filename));
-    req.filename = p.string();
+    std::filesystem::path p(std::filesystem::absolute(req->filename));
+    req->filename = p.string();
 
-    rosbag2_snapshot_msgs::TriggerSnapshotResponse res;
-    if (!client.call(req, res)) {
+    auto res = client->create_response();
+    /* TODO (jwhitleywork) FIX
+    if (!client->call(req, res)) {
       RCLCPP_ERROR(get_logger(), "Failed to call service");
-      return 1;
+      return;
     }
     if (!res.success) {
       RCLCPP_ERROR(get_logger(), "%s", res.message.c_str());
-      return 1;
+      return;
     }
-    return 0;
+    */
+    return;
   } else if (opts.action_ == SnapshotterClientOptions::PAUSE ||
     opts.action_ == SnapshotterClientOptions::RESUME)
   {
-    ros::ServiceClient client = nh_.serviceClient<std_srvs::SetBool>("enable_snapshot");
-    if (!client.exists()) {
+    auto client = create_client<std_srvs::srv::SetBool>("enable_snapshot");
+    if (!client->service_is_ready()) {
       RCLCPP_ERROR(
-        get_logger(), 
-        "Service %s does not exist. Is snapshot running in this namespace?",
-        "enable_snapshot");
-      return 1;
+        get_logger(),
+        "Service enable_snapshot does not exist. Is snapshot running in this namespace?");
+      return;
     }
-    std_srvs::SetBoolRequest req;
-    req.data = (opts.action_ == SnapshotterClientOptions::RESUME);
-    std_srvs::SetBoolResponse res;
-    if (!client.call(req, res)) {
+    std_srvs::srv::SetBool_Request::SharedPtr req;
+    req->data = (opts.action_ == SnapshotterClientOptions::RESUME);
+
+    auto res = client->create_response();
+    /* TODO(jwhitleywork) FIX
+    if (!client->call(req, res)) {
       RCLCPP_ERROR(get_logger(), "Failed to call service.");
-      return 1;
+      return;
     }
     if (!res.success) {
       RCLCPP_ERROR(get_logger(), "%s", res.message.c_str());
-      return 1;
+      return;
     }
-    return 0;
+    return;
+    */
   } else {
-    assert(false);
-    return 1;
+    throw std::runtime_error{"Invalid options received."};
   }
 }
 
