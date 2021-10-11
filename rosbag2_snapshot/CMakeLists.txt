@@ -5,13 +5,18 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME}
-  src/snapshot.cpp
+# src/snapshot.cpp
   src/snapshotter.cpp
 )
 
-rclcpp_components_register_node(${PROJECT_NAME}_node
-  EXECUTABLE snapshot
-  PLUGIN 
+rclcpp_components_register_node(snapshotter
+  EXECUTABLE snapshotter
+  PLUGIN rosbag2_snapshot::Snapshotter
+)
+
+rclcpp_components_register_node(snapshotter_client
+  EXECUTABLE snapshotter_client
+  PLUGIN rosbag2_snapshot::SnapshotterClient
 )
 
 if(BUILD_TESTING)

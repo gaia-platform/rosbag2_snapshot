@@ -11,11 +11,11 @@
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>rosbag2</depend>
+  <depend>rosbag2_cpp</depend>
   <depend>rosbag2_snapshot_msgs</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
   <depend>std_srvs</depend>
-  <depend>topic_tools</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

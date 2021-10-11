@@ -34,103 +34,108 @@
 #ifndef ROSBAG2_SNAPSHOT__SNAPSHOTTER_HPP_
 #define ROSBAG2_SNAPSHOT__SNAPSHOTTER_HPP_
 
-#include <boost/atomic.hpp>
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/shared_mutex.hpp>
-#include <ros/ros.h>
-#include <ros/time.h>
-#include <rosbag_snapshot_msgs/TriggerSnapshot.h>
-#include <std_srvs/SetBool.h>
-#include <topic_tools/shape_shifter.h>
-#include <rosgraph_msgs/TopicStatistics.h>
-#include <rosbag_snapshot_msgs/SnapshotStatus.h>
-#include <rosbag/bag.h>
-#include <rosbag/macros.h>
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp/time.hpp>
+#include <rosbag2_snapshot_msgs/srv/trigger_snapshot.hpp>
+#include <std_srvs/srv/set_bool.hpp>
+#include <rosbag2_cpp/writer.hpp>
+
+#include <chrono>
 #include <deque>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace rosbag_snapshot
+namespace rosbag2_snapshot
 {
-class ROSBAG_DECL Snapshotter;
+using namespace std::chrono_literals;
+
+class Snapshotter;
 
 /* Configuration for a single topic in the Snapshotter node. Holds
  * the buffer limits for a topic by duration (time difference between newest and oldest message)
  * and memory usage, in bytes.
  */
-struct ROSBAG_DECL SnapshotterTopicOptions
+struct SnapshotterTopicOptions
 {
   // When the value of duration_limit_, do not truncate the buffer no matter how large the duration is
-  static const ros::Duration NO_DURATION_LIMIT;
+  static const rclcpp::Duration NO_DURATION_LIMIT;
   // When the value of memory_limit_, do not trunctate the buffer no matter how much memory it consumes (DANGROUS)
-  static const int32_t NO_MEMORY_LIMIT;
+  static constexpr int32_t NO_MEMORY_LIMIT = -1;
   // When the value of duration_limit_, inherit the limit from the node's configured default
-  static const ros::Duration INHERIT_DURATION_LIMIT;
+  static const rclcpp::Duration INHERIT_DURATION_LIMIT;
   // When the value of memory_limit_, inherit the limit from the node's configured default
-  static const int32_t INHERIT_MEMORY_LIMIT;
+  static constexpr int32_t INHERIT_MEMORY_LIMIT = 0;
 
   // Maximum difference in time from newest and oldest message in buffer before older messages are removed
-  ros::Duration duration_limit_;
+  rclcpp::Duration duration_limit_;
   // Maximum memory usage of the buffer before older messages are removed
   int32_t memory_limit_;
 
-  SnapshotterTopicOptions(ros::Duration duration_limit = INHERIT_DURATION_LIMIT,
-                         int32_t memory_limit = INHERIT_MEMORY_LIMIT);
+  SnapshotterTopicOptions(
+    rclcpp::Duration duration_limit = INHERIT_DURATION_LIMIT,
+    int32_t memory_limit = INHERIT_MEMORY_LIMIT);
 };
 
 /* Configuration for the Snapshotter node. Contains default limits for memory and duration
  * and a map of topics to their limits which may override the defaults.
  */
-struct ROSBAG_DECL SnapshotterOptions
+struct SnapshotterOptions
 {
+  using TopicDetails = std::pair<std::string, std::string>;
   // Duration limit to use for a topic's buffer if one is not specified
-  ros::Duration default_duration_limit_;
+  rclcpp::Duration default_duration_limit_;
   // Memory limit to use for a topic's buffer if one is not specified
   int32_t default_memory_limit_;
-  // Period between publishing topic status messages. If <= ros::Duration(0), don't publish status
-  ros::Duration status_period_;
+  // Period between publishing topic status messages. If <= rclcpp::Duration(0), don't publish status
+  rclcpp::Duration status_period_;
   // Flag if all topics should be recorded
   bool all_topics_;
 
-  typedef std::map<std::string, SnapshotterTopicOptions> topics_t;
+  typedef std::map<TopicDetails, SnapshotterTopicOptions> topics_t;
   // Provides list of topics to snapshot and their limit configurations
   topics_t topics_;
 
-  SnapshotterOptions(ros::Duration default_duration_limit = ros::Duration(30), int32_t default_memory_limit = -1,
-                    ros::Duration status_period = ros::Duration(1));
+  SnapshotterOptions(
+    rclcpp::Duration default_duration_limit = rclcpp::Duration(30s),
+    int32_t default_memory_limit = -1,
+    rclcpp::Duration status_period = rclcpp::Duration(1s));
 
   // Add a new topic to the configuration, returns false if the topic was already present
-  bool addTopic(std::string const& topic,
-                ros::Duration duration_limit = SnapshotterTopicOptions::INHERIT_DURATION_LIMIT,
-                int32_t memory_limit = SnapshotterTopicOptions::INHERIT_MEMORY_LIMIT);
+  bool addTopic(
+    std::string const & topic,
+    std::string const & type,
+    rclcpp::Duration duration_limit = SnapshotterTopicOptions::INHERIT_DURATION_LIMIT,
+    int32_t memory_limit = SnapshotterTopicOptions::INHERIT_MEMORY_LIMIT);
 };
 
-/* Stores a buffered message of an ambiguous type and it's associated metadata (time of arrival, connection data),
+/* Stores a buffered message of an ambiguous type and it's associated metadata (time of arrival),
  * for later writing to disk
  */
-struct ROSBAG_DECL SnapshotMessage
+struct SnapshotMessage
 {
-  SnapshotMessage(topic_tools::ShapeShifter::ConstPtr _msg, boost::shared_ptr<ros::M_string> _connection_header,
-                  ros::Time _time);
-  topic_tools::ShapeShifter::ConstPtr msg;
-  boost::shared_ptr<ros::M_string> connection_header;
+  SnapshotMessage(
+    std::shared_ptr<const rclcpp::SerializedMessage> _msg,
+    rclcpp::Time _time);
+  std::shared_ptr<const rclcpp::SerializedMessage> msg;
   // ROS time when messaged arrived (does not use header stamp)
-  ros::Time time;
+  rclcpp::Time time;
 };
 
 /* Stores a queue of buffered messages for a single topic ensuring
  * that the duration and memory limits are respected by truncating
  * as needed on push() operations.
  */
-class ROSBAG_DECL MessageQueue
+class MessageQueue
 {
   friend Snapshotter;
 
 private:
+  // Logger for outputting ROS logging messages
+  rclcpp::Logger logger_;
   // Locks access to size_ and queue_
-  boost::mutex lock;
+  std::mutex lock;
   // Stores limits on buffer size and duration
   SnapshotterTopicOptions options_;
   // Current total size of the queue, in bytes
@@ -138,39 +143,37 @@ private:
   typedef std::deque<SnapshotMessage> queue_t;
   queue_t queue_;
   // Subscriber to the callback which uses this queue
-  boost::shared_ptr<ros::Subscriber> sub_;
+  std::shared_ptr<rclcpp::GenericSubscription> sub_;
 
 public:
-  explicit MessageQueue(SnapshotterTopicOptions const& options);
+  explicit MessageQueue(const SnapshotterTopicOptions & options, const rclcpp::Logger & logger);
   // Add a new message to the internal queue if possible, truncating the front of the queue as needed to enforce limits
-  void push(SnapshotMessage const& msg);
+  void push(const SnapshotMessage & msg);
   // Removes the message at the front of the queue (oldest) and returns it
   SnapshotMessage pop();
   // Returns the time difference between back and front of queue, or 0 if size <= 1
-  ros::Duration duration() const;
+  rclcpp::Duration duration() const;
   // Clear internal buffer
   void clear();
   // Store the subscriber for this topic's queue internaly so it is not deleted
-  void setSubscriber(boost::shared_ptr<ros::Subscriber> sub);
-  // Put data about oldest/newest message time, message count, and buffersize into status message
-  void fillStatus(rosgraph_msgs::TopicStatistics& status);
+  void setSubscriber(std::shared_ptr<rclcpp::GenericSubscription> sub);
   typedef std::pair<queue_t::const_iterator, queue_t::const_iterator> range_t;
   // Get a begin and end iterator into the buffer respecting the start and end timestamp constraints
-  range_t rangeFromTimes(ros::Time const& start, ros::Time const& end);
+  range_t rangeFromTimes(const rclcpp::Time & start, const rclcpp::Time & end);
 
   // Return the total message size including the meta-information
-  int64_t getMessageSize(SnapshotMessage const& msg) const;
+  int64_t getMessageSize(SnapshotMessage const & msg) const;
 
 private:
   // Internal push whitch does not obtain lock
-  void _push(SnapshotMessage const& msg);
+  void _push(SnapshotMessage const & msg);
   // Internal pop which does not obtain lock
   SnapshotMessage _pop();
   // Internal clear which does not obtain lock
   void _clear();
   // Truncate front of queue as needed to fit a new message of specified size and time. Returns False if this is
   // impossible.
-  bool preparePush(int32_t size, ros::Time const& time);
+  bool preparePush(int32_t size, rclcpp::Time const & time);
 };
 
 /* Snapshotter node. Maintains a circular buffer of the most recent messages from configured topics
@@ -178,69 +181,66 @@ private:
  * of these buffers to a bag file via a service call. Useful in live testing scenerios where interesting
  * data may be produced before a user has the oppurtunity to "rosbag record" the data.
  */
-class ROSBAG_DECL Snapshotter
+class Snapshotter : public rclcpp::Node
 {
 public:
-  explicit Snapshotter(SnapshotterOptions const& options);
+  explicit Snapshotter(const rclcpp::NodeOptions & options);
   ~Snapshotter();
-
-  // Sets up callbacks and spins until node is killed
-  int run();
 
 private:
   // Subscribe queue size for each topic
   static const int QUEUE_SIZE;
   SnapshotterOptions options_;
-  typedef std::map<std::string, boost::shared_ptr<MessageQueue> > buffers_t;
+  typedef std::map<std::string, std::shared_ptr<MessageQueue>> buffers_t;
   buffers_t buffers_;
   // Locks recording_ and writing_ states.
-  boost::upgrade_mutex state_lock_;
+  std::shared_mutex state_lock_;
   // True if new messages are being written to the internal buffer
   bool recording_;
   // True if currently writing buffers to a bag file
   bool writing_;
-  ros::NodeHandle nh_;
-  ros::ServiceServer trigger_snapshot_server_;
-  ros::ServiceServer enable_server_;
-  ros::Publisher status_pub_;
-  ros::Timer status_timer_;
-  ros::Timer poll_topic_timer_;
+  rclcpp::Service<rosbag2_snapshot_msgs::srv::TriggerSnapshot> trigger_snapshot_server_;
+  rclcpp::Service<std_srvs::srv::SetBool> enable_server_;
+  rclcpp::TimerBase::SharedPtr poll_topic_timer_;
 
+  // Convert parameter values into a SnapshotterOptions object
+  void parseOptionsFromParams();
   // Replace individual topic limits with node defaults if they are flagged for it (see SnapshotterTopicOptions)
-  void fixTopicOptions(SnapshotterTopicOptions& options);
+  void fixTopicOptions(SnapshotterTopicOptions & options);
   // If file is "prefix" mode (doesn't end in .bag), append current datetime and .bag to end
-  bool postfixFilename(std::string& file);
+  bool postfixFilename(std::string & file);
   /// Return current local datetime as a string such as 2018-05-22-14-28-51. Used to generate bag filenames
   std::string timeAsStr();
   // Clear the internal buffers of all topics. Used when resuming after a pause to avoid time gaps
   void clear();
   // Subscribe to one of the topics, setting up the callback to add to the respective queue
-  void subscribe(std::string const& topic, boost::shared_ptr<MessageQueue> queue);
+  void subscribe(std::string const & topic, std::shared_ptr<MessageQueue> queue);
   // Called on new message from any configured topic. Adds to queue for that topic
-  void topicCB(const ros::MessageEvent<topic_tools::ShapeShifter const>& msg_event,
-               boost::shared_ptr<MessageQueue> queue);
+  void topicCB(
+    std::shared_ptr<rclcpp::SerializedMessage> & msg,
+    std::shared_ptr<MessageQueue> queue);
   // Service callback, write all of part of the internal buffers to a bag file according to request parameters
-  bool triggerSnapshotCb(rosbag_snapshot_msgs::TriggerSnapshot::Request& req,
-                         rosbag_snapshot_msgs::TriggerSnapshot::Response& res);
+  bool triggerSnapshotCb(
+    rosbag2_snapshot_msgs::srv::TriggerSnapshot_Request & req,
+    rosbag2_snapshot_msgs::srv::TriggerSnapshot_Response & res);
   // Service callback, enable or disable recording (storing new messages into queue). Used to pause before writing
-  bool enableCB(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res);
+  bool enableCB(std_srvs::srv::SetBool_Request & req, std_srvs::srv::SetBool_Response & res);
   // Set recording_ to false and do nessesary cleaning, CALLER MUST OBTAIN LOCK
   void pause();
   // Set recording_ to true and do nesessary cleaning, CALLER MUST OBTAIN LOCK
   void resume();
-  // Publish status containing statistics of currently buffered topics and other state
-  void publishStatus(ros::TimerEvent const& e);
   // Poll master for new topics
-  void pollTopics(ros::TimerEvent const& e, rosbag_snapshot::SnapshotterOptions *options);
+  void pollTopics();
   // Write the parts of message_queue within the time constraints of req to the queue
   // If returns false, there was an error opening/writing the bag and an error message was written to res.message
-  bool writeTopic(rosbag::Bag& bag, MessageQueue& message_queue, std::string const& topic,
-                  rosbag_snapshot_msgs::TriggerSnapshot::Request& req,
-                  rosbag_snapshot_msgs::TriggerSnapshot::Response& res);
+  bool writeTopic(
+    rosbag2_cpp::Writer & bag_writer, MessageQueue & message_queue, std::string const & topic,
+    rosbag2_snapshot_msgs::srv::TriggerSnapshot_Request & req,
+    rosbag2_snapshot_msgs::srv::TriggerSnapshot_Response & res);
 };
 
 // Configuration for SnapshotterClient
-struct ROSBAG_DECL SnapshotterClientOptions
+struct SnapshotterClientOptions
 {
   SnapshotterClientOptions();
   enum Action
@@ -260,16 +260,15 @@ struct ROSBAG_DECL SnapshotterClientOptions
 };
 
 // Node used to call services which interface with the snapshotter node to trigger write, pause, and resume
-class ROSBAG_DECL SnapshotterClient
+class SnapshotterClient : public rclcpp::Node
 {
 public:
-  SnapshotterClient();
-  int run(SnapshotterClientOptions const& opts);
+  explicit SnapshotterClient(const rclcpp::NodeOptions & options);
 
 private:
-  ros::NodeHandle nh_;
+  void setSnappshotterClientOptions(SnapshotterClientOptions const & opts);
 };
 
-}  // namespace rosbag_snapshot
+}  // namespace rosbag2_snapshot
 
 #endif  // ROSBAG2_SNAPSHOT__SNAPSHOTTER_HPP_
