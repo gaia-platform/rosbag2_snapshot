@@ -1,0 +1,4 @@
+/**:
+  ros__parameters:
+    topics: ["/rosout"]
+    topic_types: ["rcl_interfaces/msg/Log"]

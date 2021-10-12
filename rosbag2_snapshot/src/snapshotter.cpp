@@ -78,8 +78,8 @@ SnapshotterOptions::SnapshotterOptions(
 }
 
 bool SnapshotterOptions::addTopic(
-  std::string const & topic,
-  std::string const & type,
+  const std::string & topic,
+  const std::string & type,
   rclcpp::Duration duration,
   int32_t memory)
 {
@@ -287,20 +287,30 @@ void Snapshotter::parseOptionsFromParams()
     throw ex;
   }
 
-  const auto log_all_topics = declare_parameter<std::vector<std::string>>(
+  const auto all_topics = declare_parameter<std::vector<std::string>>(
     "topics", std::vector<std::string>{});
 
-  if (log_all_topics.size() > 0) {
+  if (all_topics.size() > 0) {
+    std::vector<std::string> topic_types{};
+
+    try {
+      topic_types = declare_parameter<std::vector<std::string>>("topic_types");
+    } catch (const rclcpp::ParameterTypeException & ex) {
+      RCLCPP_ERROR(get_logger(), "If topics are provided, a topic_types array must be provided also.");
+      throw ex;
+    }
+
+    if (all_topics.size() != topic_types.size()) {
+      RCLCPP_ERROR(get_logger(), "Number of topics does not match number of topic_types.");
+      throw std::runtime_error{"Parameter mismatch."};
+    }
+
     options_.all_topics_ = false;
 
-    for (const auto & topic : log_all_topics) {
-      const auto topic_param = declare_parameter<std::vector<std::string>>("topics." + topic);
-
-      if (topic_param.size() > 0) {
-      } else {
-        RCLCPP_ERROR(get_logger(), "Topic %s provided without type.", topic.c_str());
-        throw std::runtime_error{"Topic provided without type."};
-      }
+    for (std::size_t i = 0; i < all_topics.size(); ++i) {
+      options_.topics_.insert(
+        SnapshotterOptions::topics_t::value_type(
+          std::make_pair(all_topics[i], topic_types[i]), SnapshotterTopicOptions{}));
     }
   } else {
     RCLCPP_INFO(get_logger(), "No topics list provided. Logging all topics.");

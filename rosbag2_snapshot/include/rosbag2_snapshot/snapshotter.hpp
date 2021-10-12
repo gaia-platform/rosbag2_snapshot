@@ -96,8 +96,8 @@ struct SnapshotterOptions
 
   // Add a new topic to the configuration, returns false if the topic was already present
   bool addTopic(
-    std::string const & topic,
-    std::string const & type,
+    const std::string & topic,
+    const std::string & type,
     rclcpp::Duration duration_limit = SnapshotterTopicOptions::INHERIT_DURATION_LIMIT,
     int32_t memory_limit = SnapshotterTopicOptions::INHERIT_MEMORY_LIMIT);
 };
