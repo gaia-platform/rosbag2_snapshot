@@ -44,19 +44,22 @@
 
 namespace rosbag2_snapshot
 {
-using namespace std::chrono_literals;
+
+using namespace std::chrono_literals;  // NOLINT
 
 using rclcpp::Time;
-using std::shared_ptr;
-using std::string;
+using rosbag2_snapshot_msgs::srv::TriggerSnapshot;
 using std::placeholders::_1;
 using std::placeholders::_2;
 using std::placeholders::_3;
+using std::shared_ptr;
+using std::string;
 using std_srvs::srv::SetBool;
-using rosbag2_snapshot_msgs::srv::TriggerSnapshot;
 
-const rclcpp::Duration NO_DURATION_LIMIT = rclcpp::Duration(-1s);
-const rclcpp::Duration INHERIT_DURATION_LIMIT = rclcpp::Duration(0s);
+const rclcpp::Duration SnapshotterTopicOptions::NO_DURATION_LIMIT = rclcpp::Duration(-1s);
+const int32_t SnapshotterTopicOptions::NO_MEMORY_LIMIT = -1;
+const rclcpp::Duration SnapshotterTopicOptions::INHERIT_DURATION_LIMIT = rclcpp::Duration(0s);
+const int32_t SnapshotterTopicOptions::INHERIT_MEMORY_LIMIT = 0;
 
 SnapshotterTopicOptions::SnapshotterTopicOptions(
   rclcpp::Duration duration_limit,
@@ -67,11 +70,9 @@ SnapshotterTopicOptions::SnapshotterTopicOptions(
 
 SnapshotterOptions::SnapshotterOptions(
   rclcpp::Duration default_duration_limit,
-  int32_t default_memory_limit,
-  rclcpp::Duration status_period)
+  int32_t default_memory_limit)
 : default_duration_limit_(default_duration_limit),
   default_memory_limit_(default_memory_limit),
-  status_period_(status_period),
   topics_()
 {
 }
@@ -174,6 +175,9 @@ void MessageQueue::push(SnapshotMessage const & _out)
     return;
   }
   _push(_out);
+  if (ret) {
+    lock.unlock();
+  }
 }
 
 SnapshotMessage MessageQueue::pop()
@@ -234,7 +238,6 @@ Snapshotter::Snapshotter(const rclcpp::NodeOptions & options)
   recording_(true),
   writing_(false)
 {
-  // TODO(jwhitleywork): Declare parameters
   parseOptionsFromParams();
 
   // Create the queue for each topic and set up the subscriber to add to it on new messages
@@ -269,10 +272,40 @@ void Snapshotter::parseOptionsFromParams()
 {
   try {
     options_.default_duration_limit_ = rclcpp::Duration::from_seconds(
-      declare_parameter<double>("default_duration_limit"));
+      declare_parameter<double>(
+        "default_duration_limit", -1.0));
   } catch (const rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "default_duration_limit not specified or of incorrect type.");
+    RCLCPP_ERROR(get_logger(), "default_duration_limit of incorrect type.");
     throw ex;
+  }
+
+  try {
+    options_.default_memory_limit_ =
+      declare_parameter<double>("default_memory_limit", -1.0);
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    RCLCPP_ERROR(get_logger(), "default_memory_limit of incorrect type.");
+    throw ex;
+  }
+
+  const auto log_all_topics = declare_parameter<std::vector<std::string>>(
+    "topics", std::vector<std::string>{});
+
+  if (log_all_topics.size() > 0) {
+    options_.all_topics_ = false;
+
+    for (const auto & topic : log_all_topics) {
+      const auto topic_param = declare_parameter<std::vector<std::string>>("topics." + topic);
+
+      if (topic_param.size() > 0) {
+      } else {
+        RCLCPP_ERROR(get_logger(), "Topic %s provided without type.", topic.c_str());
+        throw std::runtime_error{"Topic provided without type."};
+      }
+    }
+  } else {
+    RCLCPP_INFO(get_logger(), "No topics list provided. Logging all topics.");
+    RCLCPP_WARN(get_logger(), "Logging all topics is very memory-intensive.");
+    options_.all_topics_ = true;
   }
 }
 
@@ -380,27 +413,32 @@ bool Snapshotter::writeTopic(
   return true;
 }
 
-bool Snapshotter::triggerSnapshotCb(
+void Snapshotter::triggerSnapshotCb(
   const std::shared_ptr<rmw_request_id_t> request_header,
   const TriggerSnapshot::Request::SharedPtr req,
   TriggerSnapshot::Response::SharedPtr res)
 {
   (void)request_header;
 
-  if (!postfixFilename(req->filename)) {
+  if (req->filename.empty() || !postfixFilename(req->filename)) {
     res->success = false;
-    res->message = "invalid";
-    return true;
+    res->message = "invalid filename";
+    return;
   }
-  bool recording_prior;  // Store if we were recording prior to write to restore this state after write
+
+  bool recording_prior{true};  // Store if we were recording prior to write to restore this state after write
+
   {
     std::shared_lock<std::shared_mutex> read_lock(state_lock_);
     recording_prior = recording_;
     if (writing_) {
       res->success = false;
       res->message = "Already writing";
-      return true;
+      return;
     }
+  }
+
+  {
     std::unique_lock<std::shared_mutex> write_lock(state_lock_);
     if (recording_prior) {
       pause();
@@ -409,16 +447,13 @@ bool Snapshotter::triggerSnapshotCb(
   }
 
   // Ensure that state is updated when function exits, regardlesss of branch path / exception events
-  rclcpp::make_scope_exit(
-    [recording_prior, this]()
-    {
-      // Clear buffers beacuase time gaps (skipped messages) may have occured while paused
-      std::unique_lock<std::shared_mutex> write_lock(state_lock_);
-      // Turn off writing flag and return recording to its state before writing
-      writing_ = false;
-      if (recording_prior) {
-        this->resume();
-      }
+  RCLCPP_SCOPE_EXIT(
+    // Clear buffers beacuase time gaps (skipped messages) may have occured while paused
+    std::unique_lock<std::shared_mutex> write_lock(state_lock_);
+    // Turn off writing flag and return recording to its state before writing
+    writing_ = false;
+    if (recording_prior) {
+      this->resume();
     }
   );
 
@@ -470,7 +505,6 @@ bool Snapshotter::triggerSnapshotCb(
   */
 
   res->success = true;
-  return true;
 }
 
 void Snapshotter::clear()
@@ -493,19 +527,22 @@ void Snapshotter::resume()
   RCLCPP_INFO(get_logger(), "Buffering resumed and old data cleared.");
 }
 
-bool Snapshotter::enableCb(
+void Snapshotter::enableCb(
   const std::shared_ptr<rmw_request_id_t> request_header,
   const SetBool::Request::SharedPtr req,
   SetBool::Response::SharedPtr res)
 {
   (void)request_header;
 
-  std::shared_lock<std::shared_mutex> read_lock(state_lock_);
-  if (req->data && writing_) { // Cannot enable while writing
-    res->success = false;
-    res->message = "cannot enable recording while writing.";
-    return true;
+  {
+    std::shared_lock<std::shared_mutex> read_lock(state_lock_);
+    if (req->data && writing_) { // Cannot enable while writing
+      res->success = false;
+      res->message = "cannot enable recording while writing.";
+      return;
+    }
   }
+
   // Obtain write lock and update state if requested state is different from current
   if (req->data && !recording_) {
     std::unique_lock<std::shared_mutex> write_lock(state_lock_);
@@ -514,8 +551,8 @@ bool Snapshotter::enableCb(
     std::unique_lock<std::shared_mutex> write_lock(state_lock_);
     pause();
   }
+
   res->success = true;
-  return true;
 }
 
 void Snapshotter::pollTopics()
@@ -536,8 +573,7 @@ void Snapshotter::pollTopics()
     if (options_.addTopic(name_type.first, name_type.second[0])) {
       SnapshotterTopicOptions topic_options;
       fixTopicOptions(topic_options);
-      std::shared_ptr<MessageQueue> queue;
-      queue.reset(new MessageQueue(topic_options, get_logger()));
+      auto queue = std::make_shared<MessageQueue>(topic_options, get_logger());
       std::pair<buffers_t::iterator,
         bool> res = buffers_.insert(buffers_t::value_type(name_type.first, queue));
       assert(res.second);
@@ -603,14 +639,14 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
   } else if (opts.action_ == SnapshotterClientOptions::PAUSE ||
     opts.action_ == SnapshotterClientOptions::RESUME)
   {
-    auto client = create_client<std_srvs::srv::SetBool>("enable_snapshot");
+    auto client = create_client<SetBool>("enable_snapshot");
     if (!client->service_is_ready()) {
       RCLCPP_ERROR(
         get_logger(),
         "Service enable_snapshot does not exist. Is snapshot running in this namespace?");
       return;
     }
-    std_srvs::srv::SetBool_Request::SharedPtr req;
+    SetBool::Request::SharedPtr req;
     req->data = (opts.action_ == SnapshotterClientOptions::RESUME);
 
     auto res = client->create_response();

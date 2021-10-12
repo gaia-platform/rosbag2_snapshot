@@ -57,11 +57,11 @@ struct SnapshotterTopicOptions
   // When the value of duration_limit_, do not truncate the buffer no matter how large the duration is
   static const rclcpp::Duration NO_DURATION_LIMIT;
   // When the value of memory_limit_, do not trunctate the buffer no matter how much memory it consumes (DANGROUS)
-  static constexpr int32_t NO_MEMORY_LIMIT = -1;
+  static const int32_t NO_MEMORY_LIMIT;
   // When the value of duration_limit_, inherit the limit from the node's configured default
   static const rclcpp::Duration INHERIT_DURATION_LIMIT;
   // When the value of memory_limit_, inherit the limit from the node's configured default
-  static constexpr int32_t INHERIT_MEMORY_LIMIT = 0;
+  static const int32_t INHERIT_MEMORY_LIMIT;
 
   // Maximum difference in time from newest and oldest message in buffer before older messages are removed
   rclcpp::Duration duration_limit_;
@@ -83,8 +83,6 @@ struct SnapshotterOptions
   rclcpp::Duration default_duration_limit_;
   // Memory limit to use for a topic's buffer if one is not specified
   int32_t default_memory_limit_;
-  // Period between publishing topic status messages. If <= rclcpp::Duration(0), don't publish status
-  rclcpp::Duration status_period_;
   // Flag if all topics should be recorded
   bool all_topics_;
 
@@ -94,8 +92,7 @@ struct SnapshotterOptions
 
   SnapshotterOptions(
     rclcpp::Duration default_duration_limit = rclcpp::Duration(30s),
-    int32_t default_memory_limit = -1,
-    rclcpp::Duration status_period = rclcpp::Duration(1s));
+    int32_t default_memory_limit = -1);
 
   // Add a new topic to the configuration, returns false if the topic was already present
   bool addTopic(
@@ -216,13 +213,13 @@ private:
     std::shared_ptr<const rclcpp::SerializedMessage> msg,
     std::shared_ptr<MessageQueue> queue);
   // Service callback, write all of part of the internal buffers to a bag file according to request parameters
-  bool triggerSnapshotCb(
+  void triggerSnapshotCb(
     const std::shared_ptr<rmw_request_id_t> request_header,
     const rosbag2_snapshot_msgs::srv::TriggerSnapshot::Request::SharedPtr req,
     rosbag2_snapshot_msgs::srv::TriggerSnapshot::Response::SharedPtr res
   );
   // Service callback, enable or disable recording (storing new messages into queue). Used to pause before writing
-  bool enableCb(
+  void enableCb(
     const std::shared_ptr<rmw_request_id_t> request_header,
     const std_srvs::srv::SetBool::Request::SharedPtr req,
     std_srvs::srv::SetBool_Response::SharedPtr res

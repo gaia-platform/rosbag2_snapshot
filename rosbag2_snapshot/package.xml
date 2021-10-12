@@ -4,10 +4,10 @@
   <name>rosbag2_snapshot</name>
   <version>0.1.0</version>
   <description>The rosbag_snapshot package</description>
-  <author email="kma1660+rsp@gmail.com">Kevin Allen</author>
-  <author email="whitleysoftwareservices@gmail.com">Josh Whitley</author>
   <maintainer email="whitleysoftwareservices@gmail.com">Josh Whitley</maintainer>
   <license>BSD</license>
+  <author email="kma1660+rsp@gmail.com">Kevin Allen</author>
+  <author email="whitleysoftwareservices@gmail.com">Josh Whitley</author>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
