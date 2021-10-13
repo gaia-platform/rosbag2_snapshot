@@ -672,16 +672,13 @@ SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
     }
   }
 
-  if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE && opts.topics_.size() == 0) {
-    RCLCPP_INFO(get_logger(), "No topics provided - logging all topics.");
-    RCLCPP_WARN(get_logger(), "Logging all topics is very memory-intensive.");
-  }
-
   try {
     opts.filename_ = declare_parameter<std::string>("filename");
   } catch (const rclcpp::ParameterTypeException & ex) {
-    if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE) {
-      RCLCPP_ERROR(get_logger(), "When action is trigger_write, filename is required.");
+    if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE &&
+      std::string{ex.what()}.find("not set") == std::string::npos)
+    {
+      RCLCPP_ERROR(get_logger(), "filename must be a string.");
       throw ex;
     }
   }
@@ -695,6 +692,11 @@ SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
       RCLCPP_ERROR(get_logger(), "prefix must be a string.");
       throw ex;
     }
+  }
+
+  if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE && opts.topics_.size() == 0) {
+    RCLCPP_INFO(get_logger(), "No topics provided - logging all topics.");
+    RCLCPP_WARN(get_logger(), "Logging all topics is very memory-intensive.");
   }
 
   setSnapshotterClientOptions(opts);
