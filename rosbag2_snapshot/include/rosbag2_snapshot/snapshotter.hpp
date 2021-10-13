@@ -38,13 +38,14 @@
 #include <chrono>
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace rosbag2_snapshot
 {
-using namespace std::chrono_literals;
+using namespace std::chrono_literals;  // NOLINT
 
 class Snapshotter;
 
@@ -54,16 +55,21 @@ class Snapshotter;
  */
 struct SnapshotterTopicOptions
 {
-  // When the value of duration_limit_, do not truncate the buffer no matter how large the duration is
+  // When the value of duration_limit_, do not truncate the buffer
+  // no matter how large the duration is
   static const rclcpp::Duration NO_DURATION_LIMIT;
-  // When the value of memory_limit_, do not trunctate the buffer no matter how much memory it consumes (DANGROUS)
+  // When the value of memory_limit_, do not trunctate the buffer
+  // no matter how much memory it consumes (DANGROUS)
   static const int32_t NO_MEMORY_LIMIT;
-  // When the value of duration_limit_, inherit the limit from the node's configured default
+  // When the value of duration_limit_, inherit the limit from
+  // the node's configured default
   static const rclcpp::Duration INHERIT_DURATION_LIMIT;
-  // When the value of memory_limit_, inherit the limit from the node's configured default
+  // When the value of memory_limit_, inherit the limit from
+  // the node's configured default
   static const int32_t INHERIT_MEMORY_LIMIT;
 
-  // Maximum difference in time from newest and oldest message in buffer before older messages are removed
+  // Maximum difference in time from newest and oldest message in
+  // buffer before older messages are removed
   rclcpp::Duration duration_limit_;
   // Maximum memory usage of the buffer before older messages are removed
   int32_t memory_limit_;
@@ -139,7 +145,8 @@ private:
 
 public:
   explicit MessageQueue(const SnapshotterTopicOptions & options, const rclcpp::Logger & logger);
-  // Add a new message to the internal queue if possible, truncating the front of the queue as needed to enforce limits
+  // Add a new message to the internal queue if possible, truncating the front
+  // of the queue as needed to enforce limits
   void push(const SnapshotMessage & msg);
   // Removes the message at the front of the queue (oldest) and returns it
   SnapshotMessage pop();
@@ -150,7 +157,8 @@ public:
   // Store the subscriber for this topic's queue internaly so it is not deleted
   void setSubscriber(std::shared_ptr<rclcpp::GenericSubscription> sub);
   typedef std::pair<queue_t::const_iterator, queue_t::const_iterator> range_t;
-  // Get a begin and end iterator into the buffer respecting the start and end timestamp constraints
+  // Get a begin and end iterator into the buffer respecting the start and
+  // end timestamp constraints
   range_t rangeFromTimes(const rclcpp::Time & start, const rclcpp::Time & end);
 
   // Return the total message size including the meta-information
@@ -163,16 +171,16 @@ private:
   SnapshotMessage _pop();
   // Internal clear which does not obtain lock
   void _clear();
-  // Truncate front of queue as needed to fit a new message of specified size and time. Returns False if this is
-  // impossible.
+  // Truncate front of queue as needed to fit a new message of specified size and time.
+  // Returns False if this is impossible.
   bool preparePush(int32_t size, rclcpp::Time const & time);
 };
 
-/* Snapshotter node. Maintains a circular buffer of the most recent messages from configured topics
- * while enforcing limits on memory and duration. The node can be triggered to write some or all
- * of these buffers to a bag file via a service call. Useful in live testing scenerios where interesting
- * data may be produced before a user has the oppurtunity to "rosbag record" the data.
- */
+// Snapshotter node. Maintains a circular buffer of the most recent messages
+// from configured topics while enforcing limits on memory and duration.
+// The node can be triggered to write some or all of these buffers to a bag
+// file via a service call. Useful in live testing scenerios where interesting
+// data may be produced before a user has the oppurtunity to "rosbag record" the data.
 class Snapshotter : public rclcpp::Node
 {
 public:
@@ -190,17 +198,20 @@ private:
   bool recording_;
   // True if currently writing buffers to a bag file
   bool writing_;
-  rclcpp::Service<rosbag2_snapshot_msgs::srv::TriggerSnapshot>::SharedPtr trigger_snapshot_server_;
+  rclcpp::Service<rosbag2_snapshot_msgs::srv::TriggerSnapshot>::SharedPtr
+    trigger_snapshot_server_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enable_server_;
   rclcpp::TimerBase::SharedPtr poll_topic_timer_;
 
   // Convert parameter values into a SnapshotterOptions object
   void parseOptionsFromParams();
-  // Replace individual topic limits with node defaults if they are flagged for it (see SnapshotterTopicOptions)
+  // Replace individual topic limits with node defaults if they are
+  // flagged for it (see SnapshotterTopicOptions)
   void fixTopicOptions(SnapshotterTopicOptions & options);
   // If file is "prefix" mode (doesn't end in .bag), append current datetime and .bag to end
   bool postfixFilename(std::string & file);
-  /// Return current local datetime as a string such as 2018-05-22-14-28-51. Used to generate bag filenames
+  /// Return current local datetime as a string such as 2018-05-22-14-28-51.
+  // Used to generate bag filenames
   std::string timeAsStr();
   // Clear the internal buffers of all topics. Used when resuming after a pause to avoid time gaps
   void clear();
@@ -212,13 +223,15 @@ private:
   void topicCb(
     std::shared_ptr<const rclcpp::SerializedMessage> msg,
     std::shared_ptr<MessageQueue> queue);
-  // Service callback, write all of part of the internal buffers to a bag file according to request parameters
+  // Service callback, write all of part of the internal buffers to a bag file
+  // according to request parameters
   void triggerSnapshotCb(
     const std::shared_ptr<rmw_request_id_t> request_header,
     const rosbag2_snapshot_msgs::srv::TriggerSnapshot::Request::SharedPtr req,
     rosbag2_snapshot_msgs::srv::TriggerSnapshot::Response::SharedPtr res
   );
-  // Service callback, enable or disable recording (storing new messages into queue). Used to pause before writing
+  // Service callback, enable or disable recording (storing new messages into queue).
+  // Used to pause before writing
   void enableCb(
     const std::shared_ptr<rmw_request_id_t> request_header,
     const std_srvs::srv::SetBool::Request::SharedPtr req,
@@ -231,7 +244,8 @@ private:
   // Poll master for new topics
   void pollTopics();
   // Write the parts of message_queue within the time constraints of req to the queue
-  // If returns false, there was an error opening/writing the bag and an error message was written to res.message
+  // If returns false, there was an error opening/writing the bag and an error message
+  // was written to res.message
   bool writeTopic(
     rosbag2_cpp::Writer & bag_writer, MessageQueue & message_queue, std::string const & topic,
     rosbag2_snapshot_msgs::srv::TriggerSnapshot::Request::SharedPtr & req,
@@ -250,15 +264,18 @@ struct SnapshotterClientOptions
   };
   // What to do when SnapshotterClient.run is called
   Action action_;
-  // List of topics to write when action_ == TRIGGER_WRITE. If empty, write all buffered topics.
+  // List of topics to write when action_ == TRIGGER_WRITE.
+  // If empty, write all buffered topics.
   std::vector<std::string> topics_;
-  // Name of file to write to when action_ == TRIGGER_WRITE, relative to snapshot node. If empty, use prefix
+  // Name of file to write to when action_ == TRIGGER_WRITE, relative to snapshot node.
+  // If empty, use prefix
   std::string filename_;
   // Prefix of the name of file written to when action_ == TRIGGER_WRITE.
   std::string prefix_;
 };
 
-// Node used to call services which interface with the snapshotter node to trigger write, pause, and resume
+// Node used to call services which interface with the snapshotter node to trigger
+// write, pause, and resume
 class SnapshotterClient : public rclcpp::Node
 {
 public:

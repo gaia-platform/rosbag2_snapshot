@@ -30,10 +30,11 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rosbag2_snapshot/snapshotter.hpp>
 
+#include <filesystem>
+
 #include <cassert>
 #include <chrono>
 #include <ctime>
-#include <filesystem>
 #include <iomanip>
 #include <memory>
 #include <queue>
@@ -146,16 +147,19 @@ bool MessageQueue::preparePush(int32_t size, rclcpp::Time const & time)
     return false;
   }
 
-  // If memory limit is enforced, remove elements from front of queue until limit would be met once message is added
+  // If memory limit is enforced, remove elements from front of queue until limit
+  // would be met once message is added
   if (options_.memory_limit_ > SnapshotterTopicOptions::NO_MEMORY_LIMIT) {
     while (queue_.size() != 0 && size_ + size > options_.memory_limit_) {
       _pop();
     }
   }
 
-  // If duration limit is encforced, remove elements from front of queue until duration limit would be met once message
-  // is added
-  if (options_.duration_limit_ > SnapshotterTopicOptions::NO_DURATION_LIMIT && queue_.size() != 0) {
+  // If duration limit is encforced, remove elements from front of queue until duration limit
+  // would be met once message is added
+  if (options_.duration_limit_ > SnapshotterTopicOptions::NO_DURATION_LIMIT &&
+    queue_.size() != 0)
+  {
     rclcpp::Duration dt = time - queue_.front().time;
     while (dt > options_.duration_limit_) {
       _pop();
@@ -296,7 +300,8 @@ void Snapshotter::parseOptionsFromParams()
     try {
       topic_types = declare_parameter<std::vector<std::string>>("topic_types");
     } catch (const rclcpp::ParameterTypeException & ex) {
-      RCLCPP_ERROR(get_logger(), "If topics are provided, a topic_types array must be provided also.");
+      RCLCPP_ERROR(
+        get_logger(), "If topics are provided, a topic_types array must be provided also.");
       throw ex;
     }
 
@@ -436,7 +441,8 @@ void Snapshotter::triggerSnapshotCb(
     return;
   }
 
-  bool recording_prior{true};  // Store if we were recording prior to write to restore this state after write
+  // Store if we were recording prior to write to restore this state after write
+  bool recording_prior{true};
 
   {
     std::shared_lock<std::shared_mutex> read_lock(state_lock_);
@@ -546,7 +552,8 @@ void Snapshotter::enableCb(
 
   {
     std::shared_lock<std::shared_mutex> read_lock(state_lock_);
-    if (req->data && writing_) { // Cannot enable while writing
+    // Cannot enable while writing
+    if (req->data && writing_) {
       res->success = false;
       res->message = "cannot enable recording while writing.";
       return;
@@ -628,7 +635,8 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     }
 
     // Resolve filename relative to clients working directory to avoid confusion
-    if (req->filename.empty()) { // Special case of no specified file, ensure still in working directory of client
+    // Special case of no specified file, ensure still in working directory of client
+    if (req->filename.empty()) {
       req->filename = "./";
     }
     std::filesystem::path p(std::filesystem::absolute(req->filename));
@@ -646,7 +654,8 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     }
     */
     return;
-  } else if (opts.action_ == SnapshotterClientOptions::PAUSE ||
+  } else if (  // NOLINT
+    opts.action_ == SnapshotterClientOptions::PAUSE ||
     opts.action_ == SnapshotterClientOptions::RESUME)
   {
     auto client = create_client<SetBool>("enable_snapshot");

@@ -65,13 +65,15 @@ bool parseOptions(po::variables_map & vm, int argc, char ** argv)
     "size,s", po::value<double>()->default_value(-1),
     "Maximum memory per topic to use in buffering in MB. Default: no limit")(
     "duration,d", po::value<double>()->default_value(30.0),
-    "Maximum difference between newest and oldest buffered message per topic in seconds. Default: 30")(
+    "Maximum difference between newest and oldest buffered message per topic in seconds. "
+    "Default: 30")(
     "output-prefix,o", po::value<std::string>()->default_value(""),
     "When in trigger write mode, prepend PREFIX to name of writting bag file")(
     "output-filename,O",
     po::value<std::string>(), "When in trigger write mode, exact name of written bag file")(
     "topic", po::value<std::vector<std::string>>(),
-    "Topic to buffer. If triggering write, write only these topics instead of all buffered topics.");
+    "Topic to buffer. If triggering write, write only these topics instead of all "
+    "buffered topics.");
   // clang-format on
   po::positional_options_description p;
   p.add("topic", -1);
