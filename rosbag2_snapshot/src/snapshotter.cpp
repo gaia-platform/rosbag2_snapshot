@@ -273,6 +273,13 @@ Snapshotter::Snapshotter(const rclcpp::NodeOptions & options)
   }
 }
 
+Snapshotter::~Snapshotter()
+{
+  for (auto & buffer : buffers_) {
+    buffer.second->sub_.reset();
+  }
+}
+
 void Snapshotter::parseOptionsFromParams()
 {
   std::vector<std::string> topics{};
