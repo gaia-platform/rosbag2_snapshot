@@ -275,12 +275,13 @@ Snapshotter::Snapshotter(const rclcpp::NodeOptions & options)
 
 void Snapshotter::parseOptionsFromParams()
 {
+  std::vector<std::string> topics{};
+
   try {
     options_.default_duration_limit_ = rclcpp::Duration::from_seconds(
-      declare_parameter<double>(
-        "default_duration_limit", -1.0));
+      declare_parameter<double>("default_duration_limit", -1.0));
   } catch (const rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "default_duration_limit of incorrect type.");
+    RCLCPP_ERROR(get_logger(), "default_duration_limit is of incorrect type.");
     throw ex;
   }
 
@@ -288,40 +289,70 @@ void Snapshotter::parseOptionsFromParams()
     options_.default_memory_limit_ =
       declare_parameter<double>("default_memory_limit", -1.0);
   } catch (const rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "default_memory_limit of incorrect type.");
+    RCLCPP_ERROR(get_logger(), "default_memory_limit is of incorrect type.");
     throw ex;
   }
 
-  const auto all_topics = declare_parameter<std::vector<std::string>>(
-    "topics", std::vector<std::string>{});
-
-  if (all_topics.size() > 0) {
-    std::vector<std::string> topic_types{};
-
-    try {
-      topic_types = declare_parameter<std::vector<std::string>>("topic_types");
-    } catch (const rclcpp::ParameterTypeException & ex) {
-      RCLCPP_ERROR(
-        get_logger(), "If topics are provided, a topic_types array must be provided also.");
+  try {
+    topics = declare_parameter<std::vector<std::string>>(
+      "topics", std::vector<std::string>{});
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (std::string{ex.what()}.find("not set") == std::string::npos) {
+      RCLCPP_ERROR(get_logger(), "topics must be an array of strings.");
       throw ex;
     }
+  }
 
-    if (all_topics.size() != topic_types.size()) {
-      RCLCPP_ERROR(get_logger(), "Number of topics does not match number of topic_types.");
-      throw std::runtime_error{"Parameter mismatch."};
-    }
-
+  if (topics.size() > 0) {
     options_.all_topics_ = false;
 
-    for (std::size_t i = 0; i < all_topics.size(); ++i) {
+    for (const auto & topic : topics) {
+      std::string prefix = "topic_details." + topic;
+      std::string topic_type{};
+      SnapshotterTopicOptions opts{};
+
+      try {
+        topic_type = declare_parameter<std::string>(prefix + ".type");
+      } catch (const rclcpp::ParameterTypeException & ex) {
+        if (std::string{ex.what()}.find("not set") == std::string::npos) {
+          RCLCPP_ERROR(get_logger(), "Topic type must be a string.");
+        } else {
+          RCLCPP_ERROR(get_logger(), "Topic %s is missing a type.", topic.c_str());
+        }
+
+        throw ex;
+      }
+
+      try {
+        opts.duration_limit_ = rclcpp::Duration::from_seconds(
+          declare_parameter<double>(prefix + ".duration")
+        );
+      } catch (const rclcpp::ParameterTypeException & ex) {
+        if (std::string{ex.what()}.find("not set") == std::string::npos) {
+          RCLCPP_ERROR(
+            get_logger(), "Duration limit for topic %s must be a double.", topic.c_str());
+          throw ex;
+        }
+      }
+
+      try {
+        opts.memory_limit_ = declare_parameter<double>(prefix + ".memory");
+      } catch (const rclcpp::ParameterTypeException & ex) {
+        if (std::string{ex.what()}.find("not set") == std::string::npos) {
+          RCLCPP_ERROR(
+            get_logger(), "Memory limit for topic %s is of the wrong type.", topic.c_str());
+          throw ex;
+        }
+      }
+
       options_.topics_.insert(
         SnapshotterOptions::topics_t::value_type(
-          std::make_pair(all_topics[i], topic_types[i]), SnapshotterTopicOptions{}));
+          std::make_pair(topic, topic_type), opts));
     }
   } else {
+    options_.all_topics_ = true;
     RCLCPP_INFO(get_logger(), "No topics list provided. Logging all topics.");
     RCLCPP_WARN(get_logger(), "Logging all topics is very memory-intensive.");
-    options_.all_topics_ = true;
   }
 }
 

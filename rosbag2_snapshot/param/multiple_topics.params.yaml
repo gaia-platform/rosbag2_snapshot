@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    topics: ["/lidar1/points_raw", "/lidar2/points_raw", "/camera1/image"]
+    topic_details:
+      /lidar1/points_raw:
+        type: "sensor_msgs/msg/PointCloud2"
+      /lidar2/points_raw:
+        type: "sensor_msgs/msg/PointCloud2"
+        duration: 10.0
+      /camera1/image:
+        type: "sensor_msgs/msg/Image"
+        duration: 15.0
+        memory: 1024.0
