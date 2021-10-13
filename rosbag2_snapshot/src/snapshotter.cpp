@@ -35,6 +35,7 @@
 #include <cassert>
 #include <chrono>
 #include <ctime>
+#include <exception>
 #include <iomanip>
 #include <memory>
 #include <queue>
@@ -602,18 +603,74 @@ void Snapshotter::pollTopics()
 SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
 : rclcpp::Node("snapshotter_client", options)
 {
+  std::string action_str{};
+
+  SnapshotterClientOptions opts{};
+
+  try {
+    action_str = declare_parameter<std::string>("action_type");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    RCLCPP_ERROR(get_logger(), "action_type parameter is missing or of incorrect type.");
+    throw ex;
+  }
+
+  if (action_str == "trigger_write") {
+    opts.action_ = SnapshotterClientOptions::TRIGGER_WRITE;
+  } else if (action_str == "resume") {
+    opts.action_ = SnapshotterClientOptions::RESUME;
+  } else if (action_str == "pause") {
+    opts.action_ = SnapshotterClientOptions::PAUSE;
+  } else {
+    RCLCPP_ERROR(get_logger(), "action_type must be one of: trigger_write, resume, or pause");
+    throw std::invalid_argument{"Invalid value for action_type parameter."};
+  }
+
+  try {
+    opts.topics_ = declare_parameter<std::vector<std::string>>("topics");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (std::string{ex.what()}.find("not set") == std::string::npos) {
+      RCLCPP_ERROR(get_logger(), "topics must be an array of strings.");
+      throw ex;
+    }
+  }
+
+  if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE && opts.topics_.size() == 0) {
+    RCLCPP_INFO(get_logger(), "No topics provided - logging all topics.");
+    RCLCPP_WARN(get_logger(), "Logging all topics is very memory-intensive.");
+  }
+
+  try {
+    opts.filename_ = declare_parameter<std::string>("filename");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE) {
+      RCLCPP_ERROR(get_logger(), "When action is trigger_write, filename is required.");
+      throw ex;
+    }
+  }
+
+  try {
+    opts.prefix_ = declare_parameter<std::string>("prefix");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE &&
+      std::string{ex.what()}.find("not set") == std::string::npos)
+    {
+      RCLCPP_ERROR(get_logger(), "prefix must be a string.");
+      throw ex;
+    }
+  }
+
+  setSnapshotterClientOptions(opts);
 }
 
 void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptions & opts)
 {
   if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE) {
-    auto client = create_client<TriggerSnapshot>(
-      "trigger_snapshot");
+    auto client = create_client<TriggerSnapshot>("trigger_snapshot");
     if (!client->service_is_ready()) {
-      RCLCPP_ERROR(
-        get_logger(),
-        "Service trigger_snapshot is not ready. Is snapshot running in this namespace?");
-      return;
+      throw std::runtime_error{
+              "Service trigger_snapshot is not ready. "
+              "Is snapshot running in this namespace?"
+      };
     }
 
     TriggerSnapshot::Request::SharedPtr req;
@@ -642,17 +699,22 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     std::filesystem::path p(std::filesystem::absolute(req->filename));
     req->filename = p.string();
 
-    auto res = client->create_response();
-    /* TODO (jwhitleywork) FIX
-    if (!client->call(req, res)) {
-      RCLCPP_ERROR(get_logger(), "Failed to call service");
-      return;
+    auto result_future = client->async_send_request(req);
+    auto future_result =
+      rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future);
+
+    if (future_result == rclcpp::FutureReturnCode::SUCCESS) {
+      RCLCPP_ERROR(get_logger(), "Calling the service failed.");
+    } else {
+      auto result = result_future.get();
+      RCLCPP_INFO(
+        get_logger(),
+        "Service returned: [%s] %s",
+        (result->success ? "SUCCESS" : "FAILURE"),
+        result->message.c_str()
+      );
     }
-    if (!res.success) {
-      RCLCPP_ERROR(get_logger(), "%s", res.message.c_str());
-      return;
-    }
-    */
+
     return;
   } else if (  // NOLINT
     opts.action_ == SnapshotterClientOptions::PAUSE ||
@@ -660,26 +722,32 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
   {
     auto client = create_client<SetBool>("enable_snapshot");
     if (!client->service_is_ready()) {
-      RCLCPP_ERROR(
-        get_logger(),
-        "Service enable_snapshot does not exist. Is snapshot running in this namespace?");
-      return;
+      throw std::runtime_error{
+              "Service enable_snapshot does not exist. "
+              "Is snapshot running in this namespace?"
+      };
     }
+
     SetBool::Request::SharedPtr req;
     req->data = (opts.action_ == SnapshotterClientOptions::RESUME);
 
-    auto res = client->create_response();
-    /* TODO(jwhitleywork) FIX
-    if (!client->call(req, res)) {
-      RCLCPP_ERROR(get_logger(), "Failed to call service.");
-      return;
+    auto result_future = client->async_send_request(req);
+    auto future_result =
+      rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future);
+
+    if (future_result == rclcpp::FutureReturnCode::SUCCESS) {
+      RCLCPP_ERROR(get_logger(), "Calling the service failed.");
+    } else {
+      auto result = result_future.get();
+      RCLCPP_INFO(
+        get_logger(),
+        "Service returned: [%s] %s",
+        (result->success ? "SUCCESS" : "FAILURE"),
+        result->message.c_str()
+      );
     }
-    if (!res.success) {
-      RCLCPP_ERROR(get_logger(), "%s", res.message.c_str());
-      return;
-    }
+
     return;
-    */
   } else {
     throw std::runtime_error{"Invalid options received."};
   }
