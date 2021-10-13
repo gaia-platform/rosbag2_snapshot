@@ -22,10 +22,10 @@ Buffer recent messages until triggered to write or trigger an already running in
   ros__parameters:
     default_duration_limit: 10.0           # [Optional, default=-1] Maximum time difference between newest and oldest message in seconds
     default_memory_limit: 64.0             # [Optional, default=-1] Maximum memory used by messages in each topic's buffer, in MB
-    topics: ["/topic1", "/topic2"]         # [Required] List of topics to buffer
+    topics: ["/topic1", "/topic2"]         # [Optional] List of topics to buffer. If empty, buffer all topics.
     topic_details:
       /topic1:
-        type: "sensor_msgs/msg/NavSatFix"  # [Required] Topic type
+        type: "sensor_msgs/msg/NavSatFix"  # [Required if topic is specified] Topic type
       /topic2:
         type: "sensor_msgs/msg/Odometry"
         duration: 15.0                     # [Optional] Override duration limit, inherit memory limit
