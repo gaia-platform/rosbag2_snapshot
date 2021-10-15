@@ -185,6 +185,7 @@ class Snapshotter : public rclcpp::Node
 {
 public:
   explicit Snapshotter(const rclcpp::NodeOptions & options);
+  ~Snapshotter();
 
 private:
   // Subscribe queue size for each topic

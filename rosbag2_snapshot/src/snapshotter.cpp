@@ -35,6 +35,7 @@
 #include <cassert>
 #include <chrono>
 #include <ctime>
+#include <exception>
 #include <iomanip>
 #include <memory>
 #include <queue>
@@ -272,14 +273,22 @@ Snapshotter::Snapshotter(const rclcpp::NodeOptions & options)
   }
 }
 
+Snapshotter::~Snapshotter()
+{
+  for (auto & buffer : buffers_) {
+    buffer.second->sub_.reset();
+  }
+}
+
 void Snapshotter::parseOptionsFromParams()
 {
+  std::vector<std::string> topics{};
+
   try {
     options_.default_duration_limit_ = rclcpp::Duration::from_seconds(
-      declare_parameter<double>(
-        "default_duration_limit", -1.0));
+      declare_parameter<double>("default_duration_limit", -1.0));
   } catch (const rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "default_duration_limit of incorrect type.");
+    RCLCPP_ERROR(get_logger(), "default_duration_limit is of incorrect type.");
     throw ex;
   }
 
@@ -287,40 +296,70 @@ void Snapshotter::parseOptionsFromParams()
     options_.default_memory_limit_ =
       declare_parameter<double>("default_memory_limit", -1.0);
   } catch (const rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "default_memory_limit of incorrect type.");
+    RCLCPP_ERROR(get_logger(), "default_memory_limit is of incorrect type.");
     throw ex;
   }
 
-  const auto all_topics = declare_parameter<std::vector<std::string>>(
-    "topics", std::vector<std::string>{});
-
-  if (all_topics.size() > 0) {
-    std::vector<std::string> topic_types{};
-
-    try {
-      topic_types = declare_parameter<std::vector<std::string>>("topic_types");
-    } catch (const rclcpp::ParameterTypeException & ex) {
-      RCLCPP_ERROR(
-        get_logger(), "If topics are provided, a topic_types array must be provided also.");
+  try {
+    topics = declare_parameter<std::vector<std::string>>(
+      "topics", std::vector<std::string>{});
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (std::string{ex.what()}.find("not set") == std::string::npos) {
+      RCLCPP_ERROR(get_logger(), "topics must be an array of strings.");
       throw ex;
     }
+  }
 
-    if (all_topics.size() != topic_types.size()) {
-      RCLCPP_ERROR(get_logger(), "Number of topics does not match number of topic_types.");
-      throw std::runtime_error{"Parameter mismatch."};
-    }
-
+  if (topics.size() > 0) {
     options_.all_topics_ = false;
 
-    for (std::size_t i = 0; i < all_topics.size(); ++i) {
+    for (const auto & topic : topics) {
+      std::string prefix = "topic_details." + topic;
+      std::string topic_type{};
+      SnapshotterTopicOptions opts{};
+
+      try {
+        topic_type = declare_parameter<std::string>(prefix + ".type");
+      } catch (const rclcpp::ParameterTypeException & ex) {
+        if (std::string{ex.what()}.find("not set") == std::string::npos) {
+          RCLCPP_ERROR(get_logger(), "Topic type must be a string.");
+        } else {
+          RCLCPP_ERROR(get_logger(), "Topic %s is missing a type.", topic.c_str());
+        }
+
+        throw ex;
+      }
+
+      try {
+        opts.duration_limit_ = rclcpp::Duration::from_seconds(
+          declare_parameter<double>(prefix + ".duration")
+        );
+      } catch (const rclcpp::ParameterTypeException & ex) {
+        if (std::string{ex.what()}.find("not set") == std::string::npos) {
+          RCLCPP_ERROR(
+            get_logger(), "Duration limit for topic %s must be a double.", topic.c_str());
+          throw ex;
+        }
+      }
+
+      try {
+        opts.memory_limit_ = declare_parameter<double>(prefix + ".memory");
+      } catch (const rclcpp::ParameterTypeException & ex) {
+        if (std::string{ex.what()}.find("not set") == std::string::npos) {
+          RCLCPP_ERROR(
+            get_logger(), "Memory limit for topic %s is of the wrong type.", topic.c_str());
+          throw ex;
+        }
+      }
+
       options_.topics_.insert(
         SnapshotterOptions::topics_t::value_type(
-          std::make_pair(all_topics[i], topic_types[i]), SnapshotterTopicOptions{}));
+          std::make_pair(topic, topic_type), opts));
     }
   } else {
+    options_.all_topics_ = true;
     RCLCPP_INFO(get_logger(), "No topics list provided. Logging all topics.");
     RCLCPP_WARN(get_logger(), "Logging all topics is very memory-intensive.");
-    options_.all_topics_ = true;
   }
 }
 
@@ -602,18 +641,76 @@ void Snapshotter::pollTopics()
 SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
 : rclcpp::Node("snapshotter_client", options)
 {
+  std::string action_str{};
+
+  SnapshotterClientOptions opts{};
+
+  try {
+    action_str = declare_parameter<std::string>("action_type");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    RCLCPP_ERROR(get_logger(), "action_type parameter is missing or of incorrect type.");
+    throw ex;
+  }
+
+  if (action_str == "trigger_write") {
+    opts.action_ = SnapshotterClientOptions::TRIGGER_WRITE;
+  } else if (action_str == "resume") {
+    opts.action_ = SnapshotterClientOptions::RESUME;
+  } else if (action_str == "pause") {
+    opts.action_ = SnapshotterClientOptions::PAUSE;
+  } else {
+    RCLCPP_ERROR(get_logger(), "action_type must be one of: trigger_write, resume, or pause");
+    throw std::invalid_argument{"Invalid value for action_type parameter."};
+  }
+
+  try {
+    opts.topics_ = declare_parameter<std::vector<std::string>>("topics");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (std::string{ex.what()}.find("not set") == std::string::npos) {
+      RCLCPP_ERROR(get_logger(), "topics must be an array of strings.");
+      throw ex;
+    }
+  }
+
+  try {
+    opts.filename_ = declare_parameter<std::string>("filename");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE &&
+      std::string{ex.what()}.find("not set") == std::string::npos)
+    {
+      RCLCPP_ERROR(get_logger(), "filename must be a string.");
+      throw ex;
+    }
+  }
+
+  try {
+    opts.prefix_ = declare_parameter<std::string>("prefix");
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE &&
+      std::string{ex.what()}.find("not set") == std::string::npos)
+    {
+      RCLCPP_ERROR(get_logger(), "prefix must be a string.");
+      throw ex;
+    }
+  }
+
+  if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE && opts.topics_.size() == 0) {
+    RCLCPP_INFO(get_logger(), "No topics provided - logging all topics.");
+    RCLCPP_WARN(get_logger(), "Logging all topics is very memory-intensive.");
+  }
+
+  setSnapshotterClientOptions(opts);
 }
 
 void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptions & opts)
 {
   if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE) {
-    auto client = create_client<TriggerSnapshot>(
-      "trigger_snapshot");
+    auto client = create_client<TriggerSnapshot>("trigger_snapshot");
     if (!client->service_is_ready()) {
-      RCLCPP_ERROR(
-        get_logger(),
-        "Service trigger_snapshot is not ready. Is snapshot running in this namespace?");
-      return;
+      throw std::runtime_error{
+              "Service trigger_snapshot is not ready. "
+              "Is snapshot running in this namespace?"
+      };
     }
 
     TriggerSnapshot::Request::SharedPtr req;
@@ -642,17 +739,22 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     std::filesystem::path p(std::filesystem::absolute(req->filename));
     req->filename = p.string();
 
-    auto res = client->create_response();
-    /* TODO (jwhitleywork) FIX
-    if (!client->call(req, res)) {
-      RCLCPP_ERROR(get_logger(), "Failed to call service");
-      return;
+    auto result_future = client->async_send_request(req);
+    auto future_result =
+      rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future);
+
+    if (future_result == rclcpp::FutureReturnCode::SUCCESS) {
+      RCLCPP_ERROR(get_logger(), "Calling the service failed.");
+    } else {
+      auto result = result_future.get();
+      RCLCPP_INFO(
+        get_logger(),
+        "Service returned: [%s] %s",
+        (result->success ? "SUCCESS" : "FAILURE"),
+        result->message.c_str()
+      );
     }
-    if (!res.success) {
-      RCLCPP_ERROR(get_logger(), "%s", res.message.c_str());
-      return;
-    }
-    */
+
     return;
   } else if (  // NOLINT
     opts.action_ == SnapshotterClientOptions::PAUSE ||
@@ -660,26 +762,32 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
   {
     auto client = create_client<SetBool>("enable_snapshot");
     if (!client->service_is_ready()) {
-      RCLCPP_ERROR(
-        get_logger(),
-        "Service enable_snapshot does not exist. Is snapshot running in this namespace?");
-      return;
+      throw std::runtime_error{
+              "Service enable_snapshot does not exist. "
+              "Is snapshot running in this namespace?"
+      };
     }
+
     SetBool::Request::SharedPtr req;
     req->data = (opts.action_ == SnapshotterClientOptions::RESUME);
 
-    auto res = client->create_response();
-    /* TODO(jwhitleywork) FIX
-    if (!client->call(req, res)) {
-      RCLCPP_ERROR(get_logger(), "Failed to call service.");
-      return;
+    auto result_future = client->async_send_request(req);
+    auto future_result =
+      rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future);
+
+    if (future_result == rclcpp::FutureReturnCode::SUCCESS) {
+      RCLCPP_ERROR(get_logger(), "Calling the service failed.");
+    } else {
+      auto result = result_future.get();
+      RCLCPP_INFO(
+        get_logger(),
+        "Service returned: [%s] %s",
+        (result->success ? "SUCCESS" : "FAILURE"),
+        result->message.c_str()
+      );
     }
-    if (!res.success) {
-      RCLCPP_ERROR(get_logger(), "%s", res.message.c_str());
-      return;
-    }
+
     return;
-    */
   } else {
     throw std::runtime_error{"Invalid options received."};
   }
