@@ -31,6 +31,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
+#include <rosbag2_snapshot_msgs/msg/topic_details.hpp>
 #include <rosbag2_snapshot_msgs/srv/trigger_snapshot.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 #include <rosbag2_cpp/writer.hpp>
@@ -46,6 +47,41 @@
 namespace rosbag2_snapshot
 {
 using namespace std::chrono_literals;  // NOLINT
+using DetailsMsg = rosbag2_snapshot_msgs::msg::TopicDetails;
+
+struct TopicDetails
+{
+  std::string name;
+  std::string type;
+
+  TopicDetails() {}
+
+  TopicDetails(std::string name, std::string type)
+  : name(name), type(type) {}
+
+  bool operator==(const TopicDetails & t) const
+  {
+    return name == t.name && type == t.type;
+  }
+
+  bool operator<(const TopicDetails & t) const
+  {
+    return t.name < name || (t.name == name && t.type < type);
+  }
+
+  bool operator>(const TopicDetails & t) const
+  {
+    return t.name > name || (t.name == name && t.type > type);
+  }
+
+  DetailsMsg asMessage() const
+  {
+    DetailsMsg msg{};
+    msg.name = name;
+    msg.type = type;
+    return msg;
+  }
+};
 
 class Snapshotter;
 
@@ -84,7 +120,6 @@ struct SnapshotterTopicOptions
  */
 struct SnapshotterOptions
 {
-  using TopicDetails = std::pair<std::string, std::string>;
   // Duration limit to use for a topic's buffer if one is not specified
   rclcpp::Duration default_duration_limit_;
   // Memory limit to use for a topic's buffer if one is not specified
@@ -102,8 +137,7 @@ struct SnapshotterOptions
 
   // Add a new topic to the configuration, returns false if the topic was already present
   bool addTopic(
-    const std::string & topic,
-    const std::string & type,
+    const TopicDetails & topic_details,
     rclcpp::Duration duration_limit = SnapshotterTopicOptions::INHERIT_DURATION_LIMIT,
     int32_t memory_limit = SnapshotterTopicOptions::INHERIT_MEMORY_LIMIT);
 };
@@ -191,7 +225,7 @@ private:
   // Subscribe queue size for each topic
   static const int QUEUE_SIZE;
   SnapshotterOptions options_;
-  typedef std::map<std::string, std::shared_ptr<MessageQueue>> buffers_t;
+  typedef std::map<TopicDetails, std::shared_ptr<MessageQueue>> buffers_t;
   buffers_t buffers_;
   // Locks recording_ and writing_ states.
   std::shared_mutex state_lock_;
@@ -218,7 +252,7 @@ private:
   void clear();
   // Subscribe to one of the topics, setting up the callback to add to the respective queue
   void subscribe(
-    const std::string & topic, const std::string & type,
+    const TopicDetails & topic_details,
     std::shared_ptr<MessageQueue> queue);
   // Called on new message from any configured topic. Adds to queue for that topic
   void topicCb(
@@ -248,9 +282,10 @@ private:
   // If returns false, there was an error opening/writing the bag and an error message
   // was written to res.message
   bool writeTopic(
-    rosbag2_cpp::Writer & bag_writer, MessageQueue & message_queue, std::string const & topic,
-    rosbag2_snapshot_msgs::srv::TriggerSnapshot::Request::SharedPtr & req,
-    rosbag2_snapshot_msgs::srv::TriggerSnapshot::Response::SharedPtr & res);
+    rosbag2_cpp::Writer & bag_writer, MessageQueue & message_queue,
+    const TopicDetails & topic_details,
+    const rosbag2_snapshot_msgs::srv::TriggerSnapshot::Request::SharedPtr & req,
+    const rosbag2_snapshot_msgs::srv::TriggerSnapshot::Response::SharedPtr & res);
 };
 
 // Configuration for SnapshotterClient
@@ -267,7 +302,7 @@ struct SnapshotterClientOptions
   Action action_;
   // List of topics to write when action_ == TRIGGER_WRITE.
   // If empty, write all buffered topics.
-  std::vector<std::string> topics_;
+  std::vector<TopicDetails> topics_;
   // Name of file to write to when action_ == TRIGGER_WRITE, relative to snapshot node.
   // If empty, use prefix
   std::string filename_;

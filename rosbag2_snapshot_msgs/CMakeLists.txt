@@ -19,6 +19,7 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/TopicDetails.msg"
   "srv/TriggerSnapshot.srv"
   DEPENDENCIES builtin_interfaces
   ADD_LINTER_TESTS
