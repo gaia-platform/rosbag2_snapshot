@@ -80,14 +80,13 @@ SnapshotterOptions::SnapshotterOptions(
 }
 
 bool SnapshotterOptions::addTopic(
-  const std::string & topic,
-  const std::string & type,
+  const TopicDetails & topic_details,
   rclcpp::Duration duration,
   int32_t memory)
 {
   SnapshotterTopicOptions ops(duration, memory);
   std::pair<topics_t::iterator, bool> ret;
-  ret = topics_.insert(topics_t::value_type(std::make_pair(topic, type), ops));
+  ret = topics_.emplace(topic_details, ops);
   return ret.second;
 }
 
@@ -246,16 +245,20 @@ Snapshotter::Snapshotter(const rclcpp::NodeOptions & options)
   parseOptionsFromParams();
 
   // Create the queue for each topic and set up the subscriber to add to it on new messages
-  for (SnapshotterOptions::topics_t::value_type & pair : options_.topics_) {
-    string topic = pair.first.first;
-    string type = pair.first.second;
+  for (auto & pair : options_.topics_) {
+    string topic{pair.first.name}, type{pair.first.type};
     fixTopicOptions(pair.second);
     shared_ptr<MessageQueue> queue;
     queue.reset(new MessageQueue(pair.second, get_logger()));
+
+    TopicDetails details{};
+    details.name = topic;
+    details.type = type;
     std::pair<buffers_t::iterator, bool> res =
-      buffers_.insert(buffers_t::value_type(topic, queue));
+      buffers_.emplace(details, queue);
     assert(res.second);
-    subscribe(topic, type, queue);
+
+    subscribe(details, queue);
   }
 
   // Now that subscriptions are setup, setup service servers for writing and pausing
@@ -352,9 +355,12 @@ void Snapshotter::parseOptionsFromParams()
         }
       }
 
+      TopicDetails dets{};
+      dets.name = topic;
+      dets.type = topic_type;
+
       options_.topics_.insert(
-        SnapshotterOptions::topics_t::value_type(
-          std::make_pair(topic, topic_type), opts));
+        SnapshotterOptions::topics_t::value_type(dets, opts));
     }
   } else {
     options_.all_topics_ = true;
@@ -412,17 +418,21 @@ void Snapshotter::topicCb(
 }
 
 void Snapshotter::subscribe(
-  const string & topic, const string & type,
+  const TopicDetails & topic_details,
   std::shared_ptr<MessageQueue> queue)
 {
-  RCLCPP_INFO(get_logger(), "Subscribing to %s", topic.c_str());
+  RCLCPP_INFO(get_logger(), "Subscribing to %s", topic_details.name.c_str());
 
   auto opts = rclcpp::SubscriptionOptions{};
   opts.topic_stats_options.state = rclcpp::TopicStatisticsState::Enable;
-  opts.topic_stats_options.publish_topic = topic + "/statistics";
+  opts.topic_stats_options.publish_topic = topic_details.name + "/statistics";
 
   auto sub = create_generic_subscription(
-    topic, type, rclcpp::QoS{10}, std::bind(&Snapshotter::topicCb, this, _1, queue), opts
+    topic_details.name,
+    topic_details.type,
+    rclcpp::QoS{10},
+    std::bind(&Snapshotter::topicCb, this, _1, queue),
+    opts
   );
 
   queue->setSubscriber(sub);
@@ -431,9 +441,9 @@ void Snapshotter::subscribe(
 bool Snapshotter::writeTopic(
   rosbag2_cpp::Writer & bag_writer,
   MessageQueue & message_queue,
-  string const & topic,
-  TriggerSnapshot::Request::SharedPtr & req,
-  TriggerSnapshot::Response::SharedPtr & res)
+  const TopicDetails & topic_details,
+  const TriggerSnapshot::Request::SharedPtr & req,
+  const TriggerSnapshot::Response::SharedPtr & res)
 {
   // acquire lock for this queue
   std::lock_guard l(message_queue.lock);
@@ -476,7 +486,7 @@ void Snapshotter::triggerSnapshotCb(
 
   if (req->filename.empty() || !postfixFilename(req->filename)) {
     res->success = false;
-    res->message = "invalid filename";
+    res->message = "Invalid filename";
     return;
   }
 
@@ -512,50 +522,54 @@ void Snapshotter::triggerSnapshotCb(
     }
   );
 
-  /* TODO(jwhitleywork): FIX
-  // Create bag
-  rosbag::Bag bag;
+  rosbag2_cpp::Writer bag_writer{};
+
+  try {
+    bag_writer.open(req->filename);
+  } catch (const std::exception & ex) {
+    res->success = false;
+    res->message = "Unable to open file for writing.";
+    return;
+  }
 
   // Write each selected topic's queue to bag file
-  if (req->topics.size() && req->topics.at(0).size()) {
-    for (std::string & topic : req->topics) {
-      // Resolve and clean topic
-      try {
-        topic = ros::names::resolve(nh_.getNamespace(), topic);
-      } catch (ros::InvalidNameException const & err) {
-        RCLCPP_WARN(get_logger(), "Requested topic %s is invalid, skipping.", topic.c_str());
+  if (req->topics.size() && req->topics.at(0).name.size() && req->topics.at(0).type.size()) {
+    for (auto & topic : req->topics) {
+      TopicDetails details{topic.name, topic.type};
+      // Find the message queue for this topic if it exsists
+      auto found = buffers_.find(details);
+
+      if (found == buffers_.end()) {
+        RCLCPP_WARN(
+          get_logger(), "Requested topic %s is not subscribed, skipping.", topic.name.c_str());
         continue;
       }
 
-      // Find the message queue for this topic if it exsists
-      buffers_t::iterator found = buffers_.find(topic);
-      // If topic not found, error and exit
-      if (found == buffers_.end()) {
-        RCLCPP_WARN(get_logger(), "Requested topic %s is not subscribed, skipping.", topic.c_str());
-        continue;
-      }
-      MessageQueue & message_queue = *(*found).second;
-      if (!writeTopic(bag, message_queue, topic, req, res)) {
-        return true;
+      MessageQueue & message_queue = *(found->second);
+
+      if (!writeTopic(bag_writer, message_queue, details, req, res)) {
+        res->success = false;
+        res->message = "Failed to write topic " + topic.type + " to bag file.";
+        return;
       }
     }
-  }
-  // If topic list empty, record all buffered topics
-  else {
+  } else {  // If topic list empty, record all buffered topics
     for (const buffers_t::value_type & pair : buffers_) {
       MessageQueue & message_queue = *(pair.second);
-      std::string const & topic = pair.first;
-      if (!writeTopic(bag, message_queue, topic, req, res)) {
-        return true;
+      if (!writeTopic(bag_writer, message_queue, pair.first, req, res)) {
+        res->success = false;
+        res->message = "Failed to write topic " + pair.first.name + " to bag file.";
+        return;
       }
     }
   }
 
+  /*
   // If no topics were subscribed/valid/contained data, this is considered a non-success
   if (!bag.isOpen()) {
     res->success = false;
     res->message = res->NO_DATA_MESSAGE;
-    return true;
+    return;
   }
   */
 
@@ -626,14 +640,19 @@ void Snapshotter::pollTopics()
       return;
     }
 
-    if (options_.addTopic(name_type.first, name_type.second[0])) {
+    TopicDetails details{};
+    details.name = name_type.first;
+    details.type = name_type.second[0];
+
+    if (options_.addTopic(details)) {
       SnapshotterTopicOptions topic_options;
       fixTopicOptions(topic_options);
       auto queue = std::make_shared<MessageQueue>(topic_options, get_logger());
+
       std::pair<buffers_t::iterator,
-        bool> res = buffers_.insert(buffers_t::value_type(name_type.first, queue));
+        bool> res = buffers_.emplace(details, queue);
       assert(res.second);
-      subscribe(name_type.first, name_type.second[0], queue);
+      subscribe(details, queue);
     }
   }
 }
@@ -663,12 +682,38 @@ SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
     throw std::invalid_argument{"Invalid value for action_type parameter."};
   }
 
+  std::vector<std::string> topic_names{};
+
   try {
-    opts.topics_ = declare_parameter<std::vector<std::string>>("topics");
+    topic_names = declare_parameter<std::vector<std::string>>("topics");
   } catch (const rclcpp::ParameterTypeException & ex) {
     if (std::string{ex.what()}.find("not set") == std::string::npos) {
       RCLCPP_ERROR(get_logger(), "topics must be an array of strings.");
       throw ex;
+    }
+  }
+
+  if (topic_names.size() > 0) {
+    for (const auto & topic : topic_names) {
+      std::string prefix = "topic_details." + topic;
+      std::string topic_type{};
+
+      try {
+        topic_type = declare_parameter<std::string>(prefix + ".type");
+      } catch (const rclcpp::ParameterTypeException & ex) {
+        if (std::string{ex.what()}.find("not set") == std::string::npos) {
+          RCLCPP_ERROR(get_logger(), "Topic type must be a string.");
+        } else {
+          RCLCPP_ERROR(get_logger(), "Topic %s is missing a type.", topic.c_str());
+        }
+
+        throw ex;
+      }
+
+      TopicDetails details{};
+      details.name = topic;
+      details.type = topic_type;
+      opts.topics_.push_back(details);
     }
   }
 
@@ -714,7 +759,10 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     }
 
     TriggerSnapshot::Request::SharedPtr req;
-    req->topics = opts.topics_;
+
+    for (const auto & topic : opts.topics_) {
+      req->topics.push_back(topic.asMessage());
+    }
 
     // Prefix mode
     if (opts.filename_.empty()) {
