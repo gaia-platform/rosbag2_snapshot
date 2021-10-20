@@ -1,6 +1,6 @@
 # rosbag2_snapshot
 
-Solution for [this rosbag2 issue](https://github.com/ros2/rosbag2/issues/663) which acts similarly to [`rosbag_snapshot`](https://github.com/ros/rosbag2_snapshot). It is added as a new package here rather than patching `rosbag2` because that's how they did it in ROS 1 ;).
+Solution for [this rosbag2 issue](https://github.com/ros2/rosbag2/issues/663) which acts similarly to [`rosbag_snapshot`](https://github.com/ros/rosbag_snapshot). It is added as a new package here rather than patching `rosbag2` because that's how they did it in ROS 1 ;).
 
 It subscribes to topics and maintains a buffer of recent messages like a dash cam. This is useful in live testing where unexpected events can occur which would be useful to have data on but the opportunity is missed if `rosbag record` was not running (disk space limits make always running `rosbag record` impracticable). Instead, users may run snapshot in the background and save data from the recent past to disk as needed.
 
