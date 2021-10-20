@@ -450,6 +450,21 @@ bool Snapshotter::writeTopic(
 
   MessageQueue::range_t range = message_queue.rangeFromTimes(req->start_time, req->stop_time);
 
+  rosbag2_storage::TopicMetadata tm;
+  tm.name = topic_details.name;
+  tm.type = topic_details.type;
+  tm.serialization_format = "cdr";
+
+  writer.create_topic(tm);
+
+  for (auto msg_it = range.first; msg_it != range.second; ++msg_it) {
+    auto bag_message = std::make_shared<rosbag2_storage::SerailizedBagMessage>();
+    auto ret = rcutils_system_time_now(&bag_message->time_stamp);
+    if (ret != RCL_RET_OK) {
+      RCLCPP_ERROR(get_logger(), "Failed to assign time to rosbag message.");
+      return false;
+    }
+  }
   /* TODO(jwhitleywork): FIX
   // open bag if this the first valid topic and there is data
   if (!bag.isOpen() && range.second > range.first) {
