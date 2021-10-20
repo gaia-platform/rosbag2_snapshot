@@ -450,30 +450,30 @@ bool Snapshotter::writeTopic(
 
   MessageQueue::range_t range = message_queue.rangeFromTimes(req->start_time, req->stop_time);
 
-  /* TODO(jwhitleywork): FIX
-  // open bag if this the first valid topic and there is data
-  if (!bag.isOpen() && range.second > range.first) {
-    try {
-      bag.open(req->filename, rosbag::bagmode::Write);
-    } catch (rosbag::BagException const & err) {
-      res->success = false;
-      res->message = string("failed to open bag: ") + err.what();
+  rosbag2_storage::TopicMetadata tm;
+  tm.name = topic_details.name;
+  tm.type = topic_details.type;
+  tm.serialization_format = "cdr";
+
+  bag_writer.create_topic(tm);
+
+  for (auto msg_it = range.first; msg_it != range.second; ++msg_it) {
+    // Create BAG message
+    auto bag_message = std::make_shared<rosbag2_storage::SerializedBagMessage>();
+    auto ret = rcutils_system_time_now(&bag_message->time_stamp);
+    if (ret != RCL_RET_OK) {
+      RCLCPP_ERROR(get_logger(), "Failed to assign time to rosbag message.");
       return false;
     }
-    RCLCPP_INFO(get_logger(), "Writing snapshot to %s", req->filename.c_str());
+
+    bag_message->topic_name = tm.name;
+    bag_message->serialized_data = std::make_shared<rcutils_uint8_array_t>(
+      msg_it->msg->get_rcl_serialized_message()
+    );
+
+    bag_writer.write(bag_message);
   }
 
-  // write queue
-  try {
-    for (MessageQueue::range_t::first_type msg_it = range.first; msg_it != range.second; ++msg_it) {
-      SnapshotMessage const & msg = *msg_it;
-      bag.write(topic, msg.time, msg.msg);
-    }
-  } catch (rosbag::BagException const & err) {
-    res->success = false;
-    res->message = string("failed to write bag: ") + err.what();
-  }
-  */
   return true;
 }
 
