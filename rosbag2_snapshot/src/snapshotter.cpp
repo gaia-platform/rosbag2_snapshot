@@ -467,6 +467,7 @@ bool Snapshotter::writeTopic(
     }
 
     bag_message->topic_name = tm.name;
+    bag_message->time_stamp = msg_it->time.nanoseconds();
     bag_message->serialized_data = std::make_shared<rcutils_uint8_array_t>(
       msg_it->msg->get_rcl_serialized_message()
     );
