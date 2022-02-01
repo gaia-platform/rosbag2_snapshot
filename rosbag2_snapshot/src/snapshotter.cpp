@@ -62,6 +62,7 @@ const rclcpp::Duration SnapshotterTopicOptions::NO_DURATION_LIMIT = rclcpp::Dura
 const int32_t SnapshotterTopicOptions::NO_MEMORY_LIMIT = -1;
 const rclcpp::Duration SnapshotterTopicOptions::INHERIT_DURATION_LIMIT = rclcpp::Duration(0s);
 const int32_t SnapshotterTopicOptions::INHERIT_MEMORY_LIMIT = 0;
+static constexpr uint32_t MB_TO_B = 1e6;
 
 SnapshotterTopicOptions::SnapshotterTopicOptions(
   rclcpp::Duration duration_limit,
@@ -301,6 +302,11 @@ void Snapshotter::parseOptionsFromParams()
   } catch (const rclcpp::ParameterTypeException & ex) {
     RCLCPP_ERROR(get_logger(), "default_memory_limit is of incorrect type.");
     throw ex;
+  }
+
+  // Convert memory limit in MB to B
+  if (options_.default_memory_limit_ != -1.0) {
+    options_.default_memory_limit_ *= MB_TO_B;
   }
 
   try {
