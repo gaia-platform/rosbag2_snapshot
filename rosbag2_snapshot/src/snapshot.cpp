@@ -150,6 +150,9 @@ void appendParamOptions(ros::NodeHandle & nh, SnapshotterOptions & opts)
   if (nh.getParam("default_memory_limit", tmp)) {
     opts.default_memory_limit_ = static_cast<int>(MB_TO_BYTES * tmp);
   }
+  if (nh.getParam("system_wide_memory_limit", tmp)) {
+    opts.system_wide_memory_limit_ = static_cast<int>(MB_TO_BYTES * tmp);
+  }
   if (nh.getParam("default_duration_limit", tmp)) {
     opts.default_duration_limit_ = ros::Duration(tmp);
   }
