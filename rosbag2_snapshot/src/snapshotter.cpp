@@ -30,7 +30,13 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rosbag2_snapshot/snapshotter.hpp>
 
+#ifdef __has_include(<filesystem>)
+#include <filesystem>
+namespace fs = std::filesystem;
+#else
 #include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#endif
 
 #include <cassert>
 #include <chrono>
@@ -961,7 +967,7 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     if (req->filename.empty()) {
       req->filename = "./";
     }
-    std::experimental::filesystem::path p(std::experimental::filesystem::absolute(req->filename));
+    fs::path p(fs::absolute(req->filename));
     req->filename = p.string();
 
     auto result_future = client->async_send_request(req);
