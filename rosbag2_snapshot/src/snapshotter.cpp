@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, Open Source Robotics Foundation, Inc., GAIA Platform, Inc., All rights reserved.  // NOLINT
+// Copyright (c) 2018-2022, Open Source Robotics Foundation, Inc., GAIA Platform, Inc., UPower Robotics USA, All rights reserved.  // NOLINT
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -30,7 +30,13 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rosbag2_snapshot/snapshotter.hpp>
 
+#if __has_include(<experimental/filesystem>)
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#else
 #include <filesystem>
+namespace fs = std::filesystem;
+#endif
 
 #include <cassert>
 #include <chrono>
@@ -73,9 +79,11 @@ SnapshotterTopicOptions::SnapshotterTopicOptions(
 
 SnapshotterOptions::SnapshotterOptions(
   rclcpp::Duration default_duration_limit,
-  int32_t default_memory_limit)
+  int32_t default_memory_limit,
+  u_int64_t system_wide_memory_limit)
 : default_duration_limit_(default_duration_limit),
   default_memory_limit_(default_memory_limit),
+  system_wide_memory_limit_(system_wide_memory_limit),
   topics_()
 {
 }
@@ -102,9 +110,159 @@ SnapshotMessage::SnapshotMessage(
 {
 }
 
+std::shared_ptr<MessageQueueCollectionManager>
+  MessageQueueCollectionManager::instance_ = nullptr;
+
+MessageQueueCollectionManager::MessageQueueCollectionManager(
+  const SnapshotterTopicOptions & options, const rclcpp::Logger & logger
+)
+: options_(options), logger_(logger), p_queue_(), lock_()
+{
+  uint64_t mb_limit = options.system_wide_memory_limit_;
+
+  this->size_ = 0;
+
+  if(mb_limit > SnapshotterTopicOptions::NO_MEMORY_LIMIT)
+    this->size_limit_ = mb_limit * MB_TO_B;
+  else
+    this->size_limit_ = SnapshotterTopicOptions::NO_MEMORY_LIMIT;
+}
+
+void MessageQueueCollectionManager::report_queue_creation(MessageQueue& queue){
+  std::lock_guard<std::mutex> l(this->lock_);
+
+  this->p_queue_.push_back(&queue);
+  this->size_ += queue.size_;
+}
+
+void MessageQueueCollectionManager::report_queue_size_change(){
+  std::lock_guard<std::mutex> l(this->lock_);
+
+  int64_t new_total_size = 0;
+  auto it = this->p_queue_.begin();
+
+  while(it != this->p_queue_.end())
+  {
+    auto & p_current_queue = * it;
+    new_total_size += p_current_queue->size_;
+    it++;
+  }
+
+  this->size_ = new_total_size;
+}
+
+void MessageQueueCollectionManager::report_queue_size_change(int64_t delta_size){
+  std::lock_guard<std::mutex> l(this->lock_);
+
+  this->size_ += delta_size;
+}
+
+void MessageQueueCollectionManager::report_queue_size_change(u_int64_t old_size, u_int64_t new_size){
+  this->report_queue_size_change(new_size - old_size);
+}
+
+void MessageQueueCollectionManager::report_queue_destruction(MessageQueue& queue)
+{
+  std::lock_guard<std::mutex> l(this->lock_);
+
+  auto it = this->p_queue_.begin();
+
+  while(it != this->p_queue_.end())
+  {
+    auto p_current_queue = *it;
+    if(&queue == p_current_queue)
+    {
+      this->size_ -= queue.size_;
+      this->p_queue_.erase(it);
+      return;
+    }
+
+    it++;
+  }
+}
+
+u_int64_t MessageQueueCollectionManager::get_total_queue_collection_size(){
+  return this->size_;
+}
+
+MessageQueueCollectionManager & MessageQueueCollectionManager::Instance(const MessageQueue & msg_queue){
+  if(MessageQueueCollectionManager::instance_ == nullptr){
+    auto logger = msg_queue.logger_;
+    auto options = msg_queue.options_;
+    MessageQueueCollectionManager::instance_ = std::make_shared<MessageQueueCollectionManager>(options, logger);
+  }
+
+  auto the_instance = MessageQueueCollectionManager::instance_.get();
+
+  return *the_instance;
+}
+
+void MessageQueueCollectionManager::free_oldest_messages(size_t free_bytes_required)
+{
+  rclcpp::Time oldest_message_t;
+  MessageQueue * p_oldest_message_q;
+
+  if(this->size_limit_ == SnapshotterTopicOptions::NO_MEMORY_LIMIT){
+    return;
+  }
+
+  std::lock_guard<std::mutex> l(this->lock_);
+
+  while(this->size_limit_ - this->size_ < free_bytes_required){
+    p_oldest_message_q = NULL;
+
+    auto it = this->p_queue_.begin();
+
+    while(it != this->p_queue_.end())
+    {
+      auto p_current_queue = * it;
+      rclcpp::Time q_msg_t;
+
+      try{
+        q_msg_t = p_current_queue->get_oldest_message_time();
+      }
+      catch(std::exception e){
+        // the queue must be empty
+        continue;
+      }
+
+      if(p_oldest_message_q == NULL){
+        // first queue, nothing to compare with yet
+        p_oldest_message_q = p_current_queue;
+        oldest_message_t = q_msg_t;
+      }
+      else if(q_msg_t < oldest_message_t){
+        // this queue has a message older than the
+        // previous oldest message
+        p_oldest_message_q = p_current_queue;
+        oldest_message_t = q_msg_t;
+      }
+
+      it++;
+    }
+
+    if(p_oldest_message_q == NULL){
+      // There were no queues with any messages in storage
+      break;
+    }
+
+    p_oldest_message_q->pop();
+  }
+}
+
 MessageQueue::MessageQueue(const SnapshotterTopicOptions & options, const rclcpp::Logger & logger)
 : options_(options), logger_(logger), size_(0)
 {
+  MessageQueueCollectionManager::Instance(*this).report_queue_creation(*this);
+}
+
+MessageQueue::~MessageQueue(){
+  MessageQueueCollectionManager::Instance(*this).report_queue_destruction(*this);
+}
+
+rclcpp::Time MessageQueue::get_oldest_message_time()
+{
+  return this->queue_.at(0).time;
 }
 
 void MessageQueue::setSubscriber(shared_ptr<rclcpp::GenericSubscription> sub)
@@ -121,6 +279,7 @@ void MessageQueue::clear()
 void MessageQueue::_clear()
 {
   queue_.clear();
+  MessageQueueCollectionManager::Instance(*this).report_queue_size_change(size_, 0);
   size_ = 0;
 }
 
@@ -141,16 +300,23 @@ bool MessageQueue::preparePush(int32_t size, rclcpp::Time const & time)
     _clear();
   }
 
-  // The only case where message cannot be addded is if size is greater than limit
-  if (options_.memory_limit_ > SnapshotterTopicOptions::NO_MEMORY_LIMIT &&
-    size > options_.memory_limit_)
-  {
-    return false;
+  if(options_.system_wide_memory_limit_ > SnapshotterTopicOptions::NO_MEMORY_LIMIT){
+    if(size > options_.system_wide_memory_limit_){
+      return false;
+    }
+
+    MessageQueueCollectionManager::Instance(*this).free_oldest_messages(size);
   }
 
-  // If memory limit is enforced, remove elements from front of queue until limit
-  // would be met once message is added
+  // The only case where message cannot be addded is if size is greater than limit
   if (options_.memory_limit_ > SnapshotterTopicOptions::NO_MEMORY_LIMIT) {
+    if (size > options_.memory_limit_)
+    {
+      return false;
+    }
+
+    // If memory limit is enforced, remove elements from front of queue until limit
+    // would be met once message is added
     while (queue_.size() != 0 && size_ + size > options_.memory_limit_) {
       _pop();
     }
@@ -205,6 +371,7 @@ void MessageQueue::_push(SnapshotMessage const & _out)
   }
   queue_.push_back(_out);
   // Add size of new message to running count to maintain correctness
+  MessageQueueCollectionManager::Instance(*this).report_queue_size_change(getMessageSize(_out));
   size_ += getMessageSize(_out);
 }
 
@@ -213,6 +380,7 @@ SnapshotMessage MessageQueue::_pop()
   SnapshotMessage tmp = queue_.front();
   queue_.pop_front();
   //  Remove size of popped message to maintain correctness of size_
+  MessageQueueCollectionManager::Instance(*this).report_queue_size_change(0 - getMessageSize(tmp));
   size_ -= getMessageSize(tmp);
   return tmp;
 }
@@ -301,6 +469,14 @@ void Snapshotter::parseOptionsFromParams()
       declare_parameter<double>("default_memory_limit", -1.0);
   } catch (const rclcpp::ParameterTypeException & ex) {
     RCLCPP_ERROR(get_logger(), "default_memory_limit is of incorrect type.");
+    throw ex;
+  }
+
+  try {
+    options_.system_wide_memory_limit_ =
+      declare_parameter<double>("system_wide_memory_limit", -1.0);
+  } catch (const rclcpp::ParameterTypeException & ex) {
+    RCLCPP_ERROR(get_logger(), "system_wide_memory_limit is of incorrect type.");
     throw ex;
   }
 
@@ -725,7 +901,7 @@ SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
   }
 
   try {
-    opts.filename_ = declare_parameter<std::string>("filename");
+    opts.filename_ = declare_parameter<std::string>(std::string("filename"));
   } catch (const rclcpp::ParameterTypeException & ex) {
     if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE &&
       std::string{ex.what()}.find("not set") == std::string::npos)
@@ -736,7 +912,7 @@ SnapshotterClient::SnapshotterClient(const rclcpp::NodeOptions & options)
   }
 
   try {
-    opts.prefix_ = declare_parameter<std::string>("prefix");
+    opts.prefix_ = declare_parameter<std::string>(std::string("prefix"));
   } catch (const rclcpp::ParameterTypeException & ex) {
     if (opts.action_ == SnapshotterClientOptions::TRIGGER_WRITE &&
       std::string{ex.what()}.find("not set") == std::string::npos)
@@ -791,7 +967,7 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     if (req->filename.empty()) {
       req->filename = "./";
     }
-    std::filesystem::path p(std::filesystem::absolute(req->filename));
+    fs::path p(fs::absolute(req->filename));
     req->filename = p.string();
 
     auto result_future = client->async_send_request(req);

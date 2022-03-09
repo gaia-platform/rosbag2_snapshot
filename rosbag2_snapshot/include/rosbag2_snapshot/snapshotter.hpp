@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, Open Source Robotics Foundation, Inc., GAIA Platform, Inc., All rights reserved.  // NOLINT
+// Copyright (c) 2018-2022, Open Source Robotics Foundation, Inc., GAIA Platform, Inc., UPower Robotics USA, All rights reserved.  // NOLINT
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -109,6 +109,7 @@ struct SnapshotterTopicOptions
   rclcpp::Duration duration_limit_;
   // Maximum memory usage of the buffer before older messages are removed
   int32_t memory_limit_;
+  u_int64_t system_wide_memory_limit_;
 
   SnapshotterTopicOptions(
     rclcpp::Duration duration_limit = INHERIT_DURATION_LIMIT,
@@ -124,6 +125,8 @@ struct SnapshotterOptions
   rclcpp::Duration default_duration_limit_;
   // Memory limit to use for a topic's buffer if one is not specified
   int32_t default_memory_limit_;
+  // System-wide memory limit
+  u_int64_t system_wide_memory_limit_;
   // Flag if all topics should be recorded
   bool all_topics_;
 
@@ -133,7 +136,8 @@ struct SnapshotterOptions
 
   SnapshotterOptions(
     rclcpp::Duration default_duration_limit = rclcpp::Duration(30s),
-    int32_t default_memory_limit = -1);
+    int32_t default_memory_limit = SnapshotterTopicOptions::NO_MEMORY_LIMIT,
+    u_int64_t system_wide_memory_limit = SnapshotterTopicOptions::NO_MEMORY_LIMIT);
 
   // Add a new topic to the configuration, returns false if the topic was already present
   bool addTopic(
@@ -155,6 +159,30 @@ struct SnapshotMessage
   rclcpp::Time time;
 };
 
+class MessageQueue;
+
+class MessageQueueCollectionManager
+{
+public:
+  MessageQueueCollectionManager(const SnapshotterTopicOptions & options, const rclcpp::Logger & logger);
+  void report_queue_creation(MessageQueue& queue);
+  void report_queue_size_change(u_int64_t old_size, u_int64_t new_size);
+  void report_queue_size_change(int64_t delta_size);
+  void report_queue_size_change();
+  void report_queue_destruction(MessageQueue& queue);
+  u_int64_t get_total_queue_collection_size();
+  static MessageQueueCollectionManager & Instance(const MessageQueue & msg_queue);
+  void free_oldest_messages(size_t free_bytes_required);
+
+protected:
+  std::vector<MessageQueue *> p_queue_;
+  u_int64_t size_, size_limit_;
+  static std::shared_ptr<MessageQueueCollectionManager> instance_;
+  const SnapshotterTopicOptions & options_;
+  const rclcpp::Logger & logger_;
+  std::mutex lock_;
+};
+
 /* Stores a queue of buffered messages for a single topic ensuring
  * that the duration and memory limits are respected by truncating
  * as needed on push() operations.
@@ -162,6 +190,7 @@ struct SnapshotMessage
 class MessageQueue
 {
   friend Snapshotter;
+  friend MessageQueueCollectionManager;
 
 private:
   // Logger for outputting ROS logging messages
@@ -179,6 +208,7 @@ private:
 
 public:
   explicit MessageQueue(const SnapshotterTopicOptions & options, const rclcpp::Logger & logger);
+  ~MessageQueue();
   // Add a new message to the internal queue if possible, truncating the front
   // of the queue as needed to enforce limits
   void push(const SnapshotMessage & msg);
@@ -197,6 +227,9 @@ public:
 
   // Return the total message size including the meta-information
   int64_t getMessageSize(SnapshotMessage const & msg) const;
+
+protected:
+  rclcpp::Time get_oldest_message_time();
 
 private:
   // Internal push whitch does not obtain lock

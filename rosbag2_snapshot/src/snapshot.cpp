@@ -1,4 +1,4 @@
-// Copyright (c) 2018-2021, Open Source Robotics Foundation, Inc., GAIA Platform, Inc., All rights reserved.  // NOLINT
+// Copyright (c) 2018-2022, Open Source Robotics Foundation, Inc., GAIA Platform, Inc., UPower Robotics USA, All rights reserved.  // NOLINT
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -149,6 +149,9 @@ void appendParamOptions(ros::NodeHandle & nh, SnapshotterOptions & opts)
   double tmp;
   if (nh.getParam("default_memory_limit", tmp)) {
     opts.default_memory_limit_ = static_cast<int>(MB_TO_BYTES * tmp);
+  }
+  if (nh.getParam("system_wide_memory_limit", tmp)) {
+    opts.system_wide_memory_limit_ = static_cast<int>(MB_TO_BYTES * tmp);
   }
   if (nh.getParam("default_duration_limit", tmp)) {
     opts.default_duration_limit_ = ros::Duration(tmp);
