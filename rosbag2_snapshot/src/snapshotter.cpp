@@ -765,7 +765,7 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
       };
     }
 
-    TriggerSnapshot::Request::SharedPtr req;
+    TriggerSnapshot::Request::SharedPtr req = std::make_shared<TriggerSnapshot::Request>();
 
     for (const auto & topic : opts.topics_) {
       req->topics.push_back(topic.asMessage());
@@ -798,7 +798,7 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
     auto future_result =
       rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future);
 
-    if (future_result == rclcpp::FutureReturnCode::SUCCESS) {
+    if (future_result != rclcpp::FutureReturnCode::SUCCESS) {
       RCLCPP_ERROR(get_logger(), "Calling the service failed.");
     } else {
       auto result = result_future.get();
@@ -823,14 +823,14 @@ void SnapshotterClient::setSnapshotterClientOptions(const SnapshotterClientOptio
       };
     }
 
-    SetBool::Request::SharedPtr req;
+    SetBool::Request::SharedPtr req = std::make_shared<SetBool::Request>();
     req->data = (opts.action_ == SnapshotterClientOptions::RESUME);
 
     auto result_future = client->async_send_request(req);
     auto future_result =
       rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future);
 
-    if (future_result == rclcpp::FutureReturnCode::SUCCESS) {
+    if (future_result != rclcpp::FutureReturnCode::SUCCESS) {
       RCLCPP_ERROR(get_logger(), "Calling the service failed.");
     } else {
       auto result = result_future.get();
