@@ -1,13 +1,80 @@
 /**:
   ros__parameters:
-    topics: ["/lidar1/points_raw", "/lidar2/points_raw", "/camera1/image"]
+    default_duration_limit: 100.0
+    topics: ["/map",
+            "/path_viewer",
+            "/topology_viewer",
+            "/map_updates",
+            "/global_costmap/costmap",
+            "/local_costmap/costmap",
+            "/tf",
+            "/global_costmap/costmap_updates",
+            "/local_costmap/costmap_updates",
+            "/scan",
+            "/goal_pose",
+            "/odom",
+            "/amcl_pose",
+            "/local_plan",
+            "/plan"
+            ]
     topic_details:
-      /lidar1/points_raw:
-        type: "sensor_msgs/msg/PointCloud2"
-      /lidar2/points_raw:
-        type: "sensor_msgs/msg/PointCloud2"
-        duration: 10.0
-      /camera1/image:
-        type: "sensor_msgs/msg/Image"
-        duration: 15.0
-        memory: 1024.0
+      /map:
+        type: "nav_msgs/msg/OccupancyGrid"
+        duration: 100.0
+        memory: -1.0
+      /path_viewer:
+        type: "visualization_msgs/msg/MarkerArray"
+        duration: 100.0
+        memory: -1.0
+      /topology_viewer:
+        type: "visualization_msgs/msg/MarkerArray"
+        duration: 100.0
+        memory: -1.0
+      /map_updates:
+        type: "map_msgs/msg/OccupancyGridUpdate"
+        duration: 100.0
+        memory: -1.0
+      /global_costmap/costmap:
+        type: "nav_msgs/msg/OccupancyGrid"
+        duration: 100.0
+        memory: -1.0
+      /local_costmap/costmap:
+        type: "nav_msgs/msg/OccupancyGrid"
+        duration: 100.0
+        memory: -1.0
+      /tf:
+        type: "tf2_msgs/msg/TFMessage"
+        duration: 100.0
+        memory: -1.0
+      /global_costmap/costmap_updates:
+        type: "map_msgs/msg/OccupancyGridUpdate"
+        duration: 100.0
+        memory: -1.0
+      /local_costmap/costmap_updates:
+        type: "map_msgs/msg/OccupancyGridUpdate"
+        duration: 100.0
+        memory: -1.0
+      /scan:
+        type: "sensor_msgs/msg/LaserScan"
+        duration: 100.0
+        memory: -1.0
+      /goal_pose:
+        type: "geometry_msgs/msg/PoseStamped"
+        duration: 100.0
+        memory: -1.0
+      /odom:
+        type: "nav_msgs/msg/Odometry"
+        duration: 100.0
+        memory: -1.0
+      /amcl_pose:
+        type: "geometry_msgs/msg/PoseWithCovarianceStamped"
+        duration: 100.0
+        memory: -1.0
+      /local_plan: 
+        type: "nav_msgs/msg/Path"
+        duration: 100.0
+        memory: -1.0
+      /plan:
+        type: "nav_msgs/msg/Path"
+        duration: 100.0
+        memory: -1.0
