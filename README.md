@@ -12,7 +12,7 @@ It subscribes to topics and maintains a buffer of recent messages like a dash ca
 ### Server
 
 ```
-$ ros2 run rosbag2_snapshot snapshotter
+$ ros2 run rosbag2_snapshot snapshotter --ros-args --params-file src/rosbag2_snapshot/rosbag2_snapshot/param/multiple_topics.params.yaml (EDITTED)
 
 Buffer recent messages until triggered to write or trigger an already running instance.
 
@@ -37,8 +37,8 @@ Buffer recent messages until triggered to write or trigger an already running in
 
 ### Client
 
-###### Write all buffered data to `<datetime>.bag`
-`ros2 run rosbag2_snapshot snapshotter_client --ros-params -p action_type:=trigger_write`
+###### Write all buffered data to `<datetime>.bag` (EDITTED)
+`ros2 run rosbag2_snapshot snapshotter_client --ros-args -p action_type:=trigger_write -p prefix:=a -p filename:={절대 경로 to bag file to write to} --params-file {path to topics yaml file from rosbag2_snapshot}`
 
 ###### Write buffered data from selected topics to `new_lighting<datetime>.bag`
 `ros2 run rosbag2_snapshot snapshotter_client --ros-params -p filename:=new_lighting -p topics:=["/camera/image_raw", "/camera/camera_info"]`
@@ -52,7 +52,8 @@ Buffer recent messages until triggered to write or trigger an already running in
 ###### Resume buffering new data
 `ros2 run rosbag2_snapshot snapshotter_client --ros-params -p action_type:=resume`
 
-###### Call trigger service manually
+
+###### Call trigger service manually (LESS ERROR PRONE)
 
 ```
 $ ros2 service call /trigger_snapshot rosbag2_snapshot_msgs/srv/TriggerSnapshot "{filename: '', topics: [], start_time: {sec: 0, nanosec: 0}, stop_time: {sec: 0, nanosec: 0}}"
