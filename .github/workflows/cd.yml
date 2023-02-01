@@ -1,7 +1,7 @@
 name: CD
 on: 
   pull_request:
-    branches: [ humble-costmap ]
+    branches: [ fix_smart_ptr ]
 
 jobs:
   ecr_setting:
