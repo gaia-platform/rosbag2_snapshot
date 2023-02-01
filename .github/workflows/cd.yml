@@ -1,7 +1,8 @@
 name: CD
-on: 
-  pull_request:
-    branches: [ fix_smart_ptr ]
+on:
+  push:
+    tags:
+      - v*
 
 jobs:
   ecr_setting:
